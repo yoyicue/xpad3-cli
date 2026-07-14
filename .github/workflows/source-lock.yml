@@ -23,6 +23,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out locked revision
-        uses: actions/checkout@9c091d7d4d6f1b22f9f8d4b4ad0d9bbfca11c4a5 # v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Verify canonical repositories and immutable source tags
         run: tools/verify_sources.sh
