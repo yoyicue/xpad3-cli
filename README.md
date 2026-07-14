@@ -103,6 +103,7 @@ ADB key、配对凭据、token、密码和私钥相关行。
 ```sh
 cargo test --all
 cargo android
+tools/verify_sources.sh
 export XPAD2_RELEASE_SIGNING_BACKUP=/path/to/protected/signing-backup
 tools/package_release.sh
 tools/verify_release.sh
@@ -116,7 +117,9 @@ tools/verify_release.sh
 `tools/sign_catalog.sh` 只在发布机内存中恢复 PKCS12 密码和临时私钥，随后销毁临时目录。
 私钥、加密密码和恢复 RSA key 保持在受限本地目录与群晖冷备，绝不进入仓库或诊断包。
 发布 ZIP 同时包含各组件许可证、BoomInstaller 修改声明，以及从 `Cargo.lock` 对应 crate
-源码自动收集的 Rust 第三方许可证清单。
+源码自动收集的 Rust 第三方许可证清单。`tools/verify_sources.sh` 会联网确认每个
+`sources.lock.json` 仓库仍是 canonical 名称，且 tag 精确解析到锁定 commit；旧仓库名的
+重定向不会被当作有效来源。
 
 精确架构、事务、状态和验收定义见 [DESIGN.md](DESIGN.md)。
 

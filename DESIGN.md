@@ -124,7 +124,9 @@ xpad2-cli 集成仓库
 
 `assets.lock.json` 记录进入产品的二进制身份；`sources.lock.json` 记录每个二进制
 对应的源码仓库、commit/tag、许可证和可获取的精确源码归档。构建和发布过程不从
-未锁定的工作区文件或浮动 URL 取制品。
+未锁定的工作区文件或浮动 URL 取制品。公开 CI 使用 `tools/verify_sources.sh` 验证仓库
+canonical 名称以及 tag 到 commit 的不可变映射；被重命名仓库的旧 URL 即使仍可重定向，
+也不能通过依赖链校验。
 
 ### 3.2 开发语言与组件边界
 

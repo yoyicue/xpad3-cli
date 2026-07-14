@@ -6,6 +6,7 @@
       "component": "ionstack",
       "repository": "https://github.com/yoyicue/xpad2-ionstack-poc",
       "commit": "acb75f8db368278ae258aef2213c5f869c5ddb27",
+      "tag": "v1.1.1",
       "license": "GPL-3.0-or-later AND Apache-2.0"
     },
     {
@@ -35,6 +36,8 @@
       "component": "kernelsu-manager",
       "repository": "https://github.com/tiann/KernelSU",
       "version": "v3.2.4",
+      "commit": "0e4dafcadd4f0fec5577be599880644781280321",
+      "tag": "v3.2.4",
       "version_code": 32457,
       "license": "GPL-3.0-only"
     },
