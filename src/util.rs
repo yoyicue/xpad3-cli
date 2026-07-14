@@ -1,0 +1,309 @@
+use crate::error::{IoContext, Result, msg};
+use sha2::{Digest, Sha256};
+use std::ffi::OsStr;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub const DEFAULT_ROOT: &str = "/data/local/tmp/.xpad2";
+
+#[derive(Clone, Debug)]
+pub struct Paths {
+    pub root: PathBuf,
+    pub cache: PathBuf,
+    pub work: PathBuf,
+    pub state: PathBuf,
+    pub logs: PathBuf,
+    pub lock: PathBuf,
+}
+
+impl Paths {
+    pub fn new(cache_override: Option<&Path>) -> Self {
+        let cache_override = cache_override
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::var_os("XPAD2_CACHE_DIR").map(PathBuf::from));
+        let state_root = PathBuf::from(DEFAULT_ROOT);
+        let cache = cache_override.unwrap_or_else(|| state_root.join("cache"));
+        Self {
+            cache,
+            work: state_root.join("work"),
+            state: state_root.join("state"),
+            logs: state_root.join("logs"),
+            lock: state_root.join("operation.lock"),
+            root: state_root,
+        }
+    }
+
+    pub fn ensure(&self) -> Result<()> {
+        for path in [&self.root, &self.cache, &self.work, &self.state, &self.logs] {
+            fs::create_dir_all(path).at(path)?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).at(path)?;
+        }
+        // Older development builds created transaction directories with the
+        // caller's umask. Normalize existing diagnostics without following
+        // symlinks so exported root-chain data is never left world-readable.
+        for entry in fs::read_dir(&self.logs).at(&self.logs)? {
+            let entry = entry.at(&self.logs)?;
+            if !entry.file_type().at(entry.path())?.is_dir() {
+                continue;
+            }
+            let dir = entry.path();
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).at(&dir)?;
+            for child in fs::read_dir(&dir).at(&dir)? {
+                let child = child.at(&dir)?;
+                if child.file_type().at(child.path())?.is_file() {
+                    let path = child.path();
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).at(&path)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+pub struct OperationLock {
+    file: File,
+}
+
+impl OperationLock {
+    pub fn acquire(path: &Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).at(parent)?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)
+            .at(path)?;
+        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if rc != 0 {
+            return Err(msg(format!(
+                "another xpad2 operation is active (lock: {})",
+                path.display()
+            )));
+        }
+        Ok(Self { file })
+    }
+}
+
+impl Drop for OperationLock {
+    fn drop(&mut self) {
+        unsafe {
+            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
+pub fn sha256_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+pub fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path).at(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 1024 * 128];
+    loop {
+        let n = file.read(&mut buf).at(path)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| msg("target has no parent directory"))?;
+    fs::create_dir_all(parent).at(parent)?;
+    let partial = parent.join(format!(
+        ".{}.{}.partial",
+        path.file_name().and_then(OsStr::to_str).unwrap_or("xpad2"),
+        unique_id()
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&partial)
+            .at(&partial)?;
+        file.write_all(bytes).at(&partial)?;
+        file.sync_all().at(&partial)?;
+        fs::set_permissions(&partial, fs::Permissions::from_mode(mode)).at(&partial)?;
+        fs::rename(&partial, path).at(path)?;
+        File::open(parent).at(parent)?.sync_all().at(parent)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&partial);
+    }
+    result
+}
+
+pub fn copy_atomic(source: &Path, target: &Path, mode: u32) -> Result<()> {
+    let bytes = fs::read(source).at(source)?;
+    atomic_write(target, &bytes, mode)
+}
+
+pub fn validate_elf_arm64(path: &Path) -> Result<()> {
+    let mut header = [0u8; 64];
+    File::open(path)
+        .at(path)?
+        .read_exact(&mut header)
+        .at(path)?;
+    if &header[..4] != b"\x7fELF" {
+        return Err(msg(format!("{} is not ELF", path.display())));
+    }
+    if header[4] != 2 || header[5] != 1 {
+        return Err(msg(format!(
+            "{} is not ELF64 little-endian",
+            path.display()
+        )));
+    }
+    let machine = u16::from_le_bytes([header[18], header[19]]);
+    if machine != 183 {
+        return Err(msg(format!(
+            "{} is not AArch64 ELF (e_machine={machine})",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+pub fn safe_filename(value: &str) -> Result<&str> {
+    if value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.contains('/')
+        || value.contains("..")
+        || value.chars().any(char::is_control)
+    {
+        return Err(msg(format!("unsafe target filename: {value:?}")));
+    }
+    Ok(value)
+}
+
+pub fn run(program: &str, args: &[&str]) -> Result<Output> {
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| msg(format!("failed to execute {program}: {e}")))
+}
+
+pub fn output_text(output: &Output) -> String {
+    let stdout_lossy = String::from_utf8_lossy(&output.stdout);
+    let stderr_lossy = String::from_utf8_lossy(&output.stderr);
+    let stdout = stdout_lossy.trim();
+    let stderr = stderr_lossy.trim();
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (false, false) => format!("{stdout}\n{stderr}"),
+        (false, true) => stdout.to_string(),
+        (true, false) => stderr.to_string(),
+        (true, true) => String::new(),
+    }
+}
+
+pub fn getprop(name: &str) -> String {
+    run("/system/bin/getprop", &[name])
+        .or_else(|_| run("getprop", &[name]))
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+pub fn read_trimmed(path: &Path) -> String {
+    fs::read_to_string(path)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+pub fn boot_id() -> String {
+    read_trimmed(Path::new("/proc/sys/kernel/random/boot_id"))
+}
+
+pub fn selinux() -> String {
+    run("/system/bin/getenforce", &[])
+        .or_else(|_| run("getenforce", &[]))
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|_| "Unknown".to_string())
+}
+
+pub fn kernel_release() -> String {
+    run("/system/bin/uname", &["-r"])
+        .or_else(|_| run("uname", &["-r"]))
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+pub fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+pub fn unique_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{}-{nanos}", std::process::id())
+}
+
+pub fn timestamp_filename() -> String {
+    match run("/system/bin/date", &["+%Y%m%d-%H%M%S"])
+        .or_else(|_| run("date", &["+%Y%m%d-%H%M%S"]))
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    {
+        Ok(value) if !value.is_empty() => value,
+        _ => unique_id(),
+    }
+}
+
+pub fn epoch_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+pub fn executable_exists(path: &Path) -> bool {
+    path.metadata()
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+pub fn remove_if_exists(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(crate::error::Error::Io {
+            path: path.to_path_buf(),
+            source: e,
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filenames_are_single_safe_segments() {
+        assert_eq!(safe_filename("tool-1.0").unwrap(), "tool-1.0");
+        for bad in ["", ".", "..", "../tool", "a/b", "a..b", "bad\nname"] {
+            assert!(safe_filename(bad).is_err(), "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn shell_quote_handles_single_quotes() {
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+}

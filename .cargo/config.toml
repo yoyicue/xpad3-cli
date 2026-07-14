@@ -1,0 +1,3 @@
+[alias]
+android = "ndk -t arm64-v8a -P 33 build --release"
+

@@ -1,0 +1,455 @@
+use crate::apk;
+use crate::catalog::{Catalog, ResolvedArtifact};
+use crate::device;
+use crate::error::{IoContext, Result, msg, needs_reboot};
+use crate::logging::TransactionLog;
+use crate::model::{ApkIdentity, Artifact, ComponentState};
+use crate::root::RootSession;
+use crate::util::{
+    Paths, atomic_write, copy_atomic, output_text, run, safe_filename, sha256_bytes, sha256_file,
+    shell_quote, validate_elf_arm64,
+};
+use serde_json::json;
+use std::fs::{self, File};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
+use zip::ZipArchive;
+
+const XPAD_INSTALL: &str = "/data/local/tmp/xpad-install";
+
+pub fn install_locked_cli(
+    catalog: &Catalog,
+    paths: &Paths,
+    id: &str,
+    log: &mut TransactionLog,
+) -> Result<bool> {
+    let artifact = catalog.artifact(id)?;
+    let target = artifact
+        .target
+        .as_deref()
+        .ok_or_else(|| msg(format!("locked CLI {id} has no target")))?;
+    let state = device::cli_status(artifact);
+    if state.state == ComponentState::Installed {
+        log.event(
+            "component",
+            "skipped",
+            json!({"id": id, "reason": "already verified"}),
+        )?;
+        println!("✓ {id}: 已是锁定版本，跳过");
+        return Ok(false);
+    }
+    let resolved = catalog.resolve(id, paths)?;
+    let bytes = verified_bytes(&resolved)?;
+    let staging = paths.work.join(format!("validate-{id}"));
+    atomic_write(&staging, &bytes, artifact.mode)?;
+    validate_elf_arm64(&staging)?;
+    atomic_write(Path::new(target), &bytes, artifact.mode)?;
+    validate_elf_arm64(Path::new(target))?;
+    let actual = sha256_file(Path::new(target))?;
+    if actual != artifact.sha256 {
+        return Err(msg(format!("post-install SHA-256 mismatch for {id}")));
+    }
+    if id == "xpad-installer" {
+        let output = run(target, &["doctor"])?;
+        log.command_result(
+            "xpad-install doctor",
+            output.status.success(),
+            &output_text(&output),
+        )?;
+        if !output.status.success() {
+            return Err(classify_installer_error(
+                "xpad-install doctor",
+                &output_text(&output),
+            ));
+        }
+    }
+    log.event("component", "installed", json!({"id": id, "target": target, "sha256": actual, "source": resolved.source_description()}))?;
+    println!("✓ {id}: 已安装并验证");
+    Ok(true)
+}
+
+pub fn install_arbitrary_cli(
+    source: &Path,
+    name: Option<&str>,
+    log: &mut TransactionLog,
+) -> Result<PathBuf> {
+    validate_elf_arm64(source)?;
+    let filename = match name {
+        Some(name) => safe_filename(name)?.to_string(),
+        None => source
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| msg("CLI source has no valid basename"))
+            .and_then(|s| safe_filename(s).map(str::to_string))?,
+    };
+    let target = PathBuf::from("/data/local/tmp").join(filename);
+    let digest = sha256_file(source)?;
+    copy_atomic(source, &target, 0o700)?;
+    validate_elf_arm64(&target)?;
+    if sha256_file(&target)? != digest {
+        return Err(msg("post-install CLI SHA-256 mismatch"));
+    }
+    log.event(
+        "cli",
+        "installed",
+        json!({"source": source, "target": target, "sha256": digest}),
+    )?;
+    Ok(target)
+}
+
+pub fn ensure_ksu(
+    catalog: &Catalog,
+    paths: &Paths,
+    root: &RootSession,
+    log: &mut TransactionLog,
+) -> Result<bool> {
+    root.check_boot()?;
+    let resolved = catalog.resolve("ksud", paths)?;
+    let bytes = verified_bytes(&resolved)?;
+    let diagnostic = paths.state.join("ksud-xpad2");
+    atomic_write(&diagnostic, &bytes, 0o700)?;
+    let before = device::ksu_status(paths);
+    if before.state == ComponentState::Active {
+        log.event(
+            "component",
+            "skipped",
+            json!({"id": "ksu", "reason": "healthy in current boot"}),
+        )?;
+        println!("✓ ksu: 当前启动周期已健康加载，跳过");
+        return Ok(false);
+    }
+    if before.state == ComponentState::NeedsReboot {
+        return Err(needs_reboot(
+            before
+                .detail
+                .unwrap_or_else(|| "loaded KernelSU is incompatible".to_string()),
+        ));
+    }
+    if device::ksu_module_loaded() {
+        return Err(needs_reboot(before.detail.unwrap_or_else(|| {
+            "KernelSU module is already loaded but cannot be verified; refusing online unload or replacement".to_string()
+        })));
+    }
+    let path = diagnostic
+        .to_str()
+        .ok_or_else(|| msg("invalid diagnostic ksud path"))?;
+    let command = format!("{} late-load --kmi xpad2-4.19.191", shell_quote(path));
+    log.event(
+        "component",
+        "running",
+        json!({"id": "ksu", "action": "late-load"}),
+    )?;
+    let output = root.exec(&command)?;
+    log.command_result("ksu late-load", output.status == 0, &output.text)?;
+    if output.status != 0 {
+        return Err(msg(format!(
+            "KernelSU late-load failed with exit {}: {}",
+            output.status, output.text
+        )));
+    }
+    // `ksud late-load` daemonizes before the child loads the embedded module.
+    // Keep the temporary root window open until that child has either exposed
+    // the complete locked identity or timed out. Closing root immediately
+    // races the child and can restore SELinux before init_module(2).
+    log.event(
+        "component",
+        "waiting",
+        json!({"id": "ksu", "deadline_seconds": 30}),
+    )?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut after = device::ksu_status(paths);
+    while after.state != ComponentState::Active && Instant::now() < deadline {
+        root.check_boot()?;
+        thread::sleep(Duration::from_millis(250));
+        after = device::ksu_status(paths);
+    }
+    if after.state != ComponentState::Active {
+        let detail = after.detail.unwrap_or_default();
+        if device::ksu_module_loaded() {
+            return Err(needs_reboot(format!(
+                "KernelSU is resident but failed locked debug-info verification: {detail}"
+            )));
+        }
+        return Err(msg(format!(
+            "KernelSU late-load child did not register the module within 30 seconds: {detail}"
+        )));
+    }
+    log.event(
+        "component",
+        "active",
+        json!({"id": "ksu", "version": 32547, "uapi": 2, "runtime": "late-load"}),
+    )?;
+    println!("✓ ksu: 32547 / UAPI 2 / late-load 已验证");
+    Ok(true)
+}
+
+pub fn install_locked_apk(
+    catalog: &Catalog,
+    paths: &Paths,
+    id: &str,
+    log: &mut TransactionLog,
+) -> Result<bool> {
+    let artifact = catalog.artifact(id)?;
+    let mut current = device::apk_status(artifact);
+    if id == "boominstaller" && current.state == ComponentState::Ready {
+        println!("BoomInstaller 自启动正在收敛，最多等待 15 秒…");
+        for _ in 0..15 {
+            thread::sleep(Duration::from_secs(1));
+            current = device::apk_status(artifact);
+            if current.state == ComponentState::Active {
+                break;
+            }
+        }
+    }
+    let needs_activation = id == "boominstaller"
+        && matches!(
+            current.state,
+            ComponentState::Broken | ComponentState::Ready | ComponentState::Installed
+        );
+    if (id == "boominstaller" && current.state == ComponentState::Active)
+        || (id != "boominstaller" && current.state == ComponentState::Installed)
+    {
+        log.event(
+            "component",
+            "skipped",
+            json!({"id": id, "reason": "installed identity verified"}),
+        )?;
+        println!("✓ {id}: 已是锁定版本，跳过");
+        return Ok(false);
+    }
+    if current.state == ComponentState::Incompatible {
+        return Err(msg(format!(
+            "{id} has an incompatible installed identity; xpad2 will not uninstall it or erase app data: {}",
+            current.detail.unwrap_or_default()
+        )));
+    }
+    install_locked_cli(catalog, paths, "xpad-installer", log)?;
+    let resolved = catalog.resolve(id, paths)?;
+    let bytes = verified_bytes(&resolved)?;
+    let staged = paths.work.join(&artifact.filename);
+    atomic_write(&staged, &bytes, 0o600)?;
+    let identity = apk::inspect(&staged)?;
+    verify_locked_apk_identity(artifact, &identity)?;
+    apk::check_arm64_compatible(&identity)?;
+
+    let mut changed = false;
+    if !needs_activation {
+        install_apk_with_xpad_install(&staged, &identity, log)?;
+        changed = true;
+        verify_installed(artifact, &identity)?;
+    }
+    if id == "boominstaller" {
+        activate_boom(&staged, paths, log)?;
+        changed = true;
+        let final_state = device::apk_status(artifact);
+        if final_state.state != ComponentState::Active {
+            return Err(msg(format!(
+                "BoomInstaller activation verification failed: {}",
+                final_state.detail.unwrap_or_default()
+            )));
+        }
+    }
+    log.event("component", "installed", json!({"id": id, "package": identity.package, "version_code": identity.version_code, "cert_sha256": identity.cert_sha256, "source": resolved.source_description()}))?;
+    println!(
+        "✓ {id}: 包名、版本、签名{}已验证",
+        if id == "boominstaller" {
+            "和服务"
+        } else {
+            ""
+        }
+    );
+    Ok(changed)
+}
+
+pub fn install_arbitrary_apk(path: &Path, log: &mut TransactionLog) -> Result<ApkIdentity> {
+    let identity = apk::inspect(path)?;
+    apk::check_arm64_compatible(&identity)?;
+    println!(
+        "APK: package={} versionCode={} certSHA256={} ABI={}",
+        identity.package,
+        identity.version_code,
+        identity.cert_sha256,
+        if identity.native_abis.is_empty() {
+            "none".to_string()
+        } else {
+            identity.native_abis.join(",")
+        }
+    );
+    if let Some(installed) = device::installed_apk_identity(&identity.package)? {
+        if installed.cert_sha256 != identity.cert_sha256 {
+            return Err(msg(format!(
+                "installed {} uses a different signing certificate; refusing uninstall/data loss",
+                identity.package
+            )));
+        }
+        if installed.version_code >= identity.version_code {
+            log.event("apk", "skipped", json!({"package": identity.package, "installed_version": installed.version_code, "candidate_version": identity.version_code}))?;
+            return Ok(installed);
+        }
+    }
+    if !Path::new(XPAD_INSTALL).exists() {
+        return Err(msg(
+            "xpad-install is not installed; run `xpad2 install xpad-installer` first",
+        ));
+    }
+    install_apk_with_xpad_install(path, &identity, log)?;
+    let installed = device::installed_apk_identity(&identity.package)?.ok_or_else(|| {
+        msg(format!(
+            "PackageManager cannot find {} after install",
+            identity.package
+        ))
+    })?;
+    if installed.version_code != identity.version_code
+        || installed.cert_sha256 != identity.cert_sha256
+    {
+        return Err(msg("independent PackageManager APK verification failed"));
+    }
+    Ok(installed)
+}
+
+fn verified_bytes(resolved: &ResolvedArtifact<'_>) -> Result<Vec<u8>> {
+    let bytes = resolved.load()?;
+    if bytes.len() as u64 != resolved.artifact.size {
+        return Err(msg(format!("size mismatch for {}", resolved.artifact.id)));
+    }
+    let actual = sha256_bytes(&bytes);
+    if actual != resolved.artifact.sha256 {
+        return Err(msg(format!(
+            "SHA-256 mismatch for {}",
+            resolved.artifact.id
+        )));
+    }
+    Ok(bytes)
+}
+
+fn verify_locked_apk_identity(artifact: &Artifact, identity: &ApkIdentity) -> Result<()> {
+    if identity.size != artifact.size
+        || identity.apk_sha256 != artifact.sha256
+        || artifact.package.as_deref() != Some(identity.package.as_str())
+        || artifact.version_code != Some(identity.version_code)
+        || artifact.cert_sha256.as_deref() != Some(identity.cert_sha256.as_str())
+    {
+        return Err(msg(format!(
+            "locked APK identity mismatch for {}: package={} versionCode={} cert={} sha256={} size={}",
+            artifact.id,
+            identity.package,
+            identity.version_code,
+            identity.cert_sha256,
+            identity.apk_sha256,
+            identity.size
+        )));
+    }
+    Ok(())
+}
+
+fn install_apk_with_xpad_install(
+    path: &Path,
+    identity: &ApkIdentity,
+    log: &mut TransactionLog,
+) -> Result<()> {
+    let path_text = path.to_str().ok_or_else(|| msg("invalid APK path"))?;
+    println!(
+        "安装 {}：通常 30–90 秒；若 Android 报 process is bad，将停止并要求普通重启。",
+        identity.package
+    );
+    log.event(
+        "apk",
+        "installing",
+        json!({"package": identity.package, "version_code": identity.version_code}),
+    )?;
+    let output = run(XPAD_INSTALL, &["install", "--backend", "auto", path_text])?;
+    let text = output_text(&output);
+    log.command_result("xpad-install install", output.status.success(), &text)?;
+    if !output.status.success() {
+        return Err(classify_installer_error("APK install", &text));
+    }
+    Ok(())
+}
+
+fn verify_installed(artifact: &Artifact, expected: &ApkIdentity) -> Result<()> {
+    let package = artifact.package.as_deref().unwrap_or(&expected.package);
+    let installed = device::installed_apk_identity(package)?.ok_or_else(|| {
+        msg(format!(
+            "PackageManager cannot find {package} after install"
+        ))
+    })?;
+    if installed.package != expected.package
+        || installed.version_code != expected.version_code
+        || installed.cert_sha256 != expected.cert_sha256
+    {
+        return Err(msg(format!(
+            "independent PackageManager verification failed for {package}"
+        )));
+    }
+    if device::installer_attribution(package).is_none() {
+        return Err(msg(format!(
+            "PackageManager did not report installer attribution for {package}"
+        )));
+    }
+    Ok(())
+}
+
+fn activate_boom(apk_path: &Path, paths: &Paths, log: &mut TransactionLog) -> Result<()> {
+    let starter = paths.work.join("boominstaller-starter");
+    extract_zip_member(apk_path, "lib/arm64-v8a/libshizuku.so", &starter, 0o700)?;
+    let starter_text = starter
+        .to_str()
+        .ok_or_else(|| msg("invalid Boom starter path"))?;
+    let apk_text = apk_path
+        .to_str()
+        .ok_or_else(|| msg("invalid Boom APK path"))?;
+    let starter_arg = format!("--starter={starter_text}");
+    let apk_arg = format!("--apk={apk_text}");
+    log.event("boominstaller", "activating", json!({"autostart": true}))?;
+    println!("激活 BoomInstaller 并配置普通开机自启动，预计约 20–60 秒…");
+    let output = run(XPAD_INSTALL, &["activate", &starter_arg, &apk_arg])?;
+    let text = output_text(&output);
+    log.command_result("xpad-install activate", output.status.success(), &text)?;
+    if !output.status.success() {
+        return Err(classify_installer_error("BoomInstaller activation", &text));
+    }
+    Ok(())
+}
+
+fn extract_zip_member(apk: &Path, member: &str, target: &Path, mode: u32) -> Result<()> {
+    let file = File::open(apk).at(apk)?;
+    let mut zip = ZipArchive::new(file)?;
+    let mut entry = zip
+        .by_name(member)
+        .map_err(|_| msg(format!("APK lacks required {member}")))?;
+    let mut bytes = Vec::new();
+    entry.read_to_end(&mut bytes).at(apk)?;
+    atomic_write(target, &bytes, mode)
+}
+
+fn classify_installer_error(context: &str, text: &str) -> crate::error::Error {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("process is bad")
+        || lower.contains("bad process")
+        || lower.contains("zygote") && lower.contains("bad")
+    {
+        needs_reboot(format!(
+            "{context}: Android marked the helper process bad; reboot clears this per-boot state"
+        ))
+    } else {
+        msg(format!("{context} failed: {text}"))
+    }
+}
+
+pub fn cleanup_work(paths: &Paths) -> Result<()> {
+    if !paths.work.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&paths.work).at(&paths.work)? {
+        let entry = entry.at(&paths.work)?;
+        let path = entry.path();
+        if entry.file_type().at(&path)?.is_dir() {
+            fs::remove_dir_all(&path).at(&path)?;
+        } else {
+            fs::remove_file(&path).at(&path)?;
+        }
+    }
+    Ok(())
+}
