@@ -1,9 +1,11 @@
 # XPad2 CLI 设计
 
-状态：v0.1.4 已实现；v0.1.1 完成 BoomInstaller 依赖身份和公开分发材料，v0.1.2
+状态：v0.1.5 已实现；v0.1.1 完成 BoomInstaller 依赖身份和公开分发材料，v0.1.2
 增加可验证的 OTA 冻结策略与 Root 前强制门禁，v0.1.3 对齐 KernelSU 驱动与
 官方生产签名 Manager 的 32547 构建号，v0.1.4 升级 late-load v0.2.1，恢复
-`u:r:ksu:s0` Manager Root 且保持全局 SELinux Enforcing（2026-07-15）。
+`u:r:ksu:s0` Manager Root 且保持全局 SELinux Enforcing；v0.1.5 将 BoomInstaller
+升级到 Root 主服务 + 隔离 UID 1000 APK broker，并增加开机 Root/ADB 恢复链
+（2026-07-15）。
 
 验收覆盖单 ELF、只读状态探针、3-worker IonStack 临时 Root、KernelSU late-load、
 CLI/APK 身份验证、临时 Root 安全收口、同 boot 幂等重跑、普通重启后恢复、RSA 签名
@@ -548,7 +550,7 @@ xpad2log-YYYYMMDD-HHMMSS.zip
 | `ksud-xpad2` | KernelSU 32547 / UAPI 2 | `26ea0f41af159a63a9afdff98963247da9d0bad0363f7e9c937f4cfbcd9f69c6` |
 | KernelSU Manager | v3.2.5-22-gccfee6dc / 32547 | `bd2b5d6671ed3636d1b3ac40c0f2e7dc0eb23319298fefc59d88b382e2800d7e` |
 | `xpad-install` | v0.1.1 | `a0b638402abf0e567d8927ac1a865b1eefaff710bc4f32273bd5c49ce55fcf75` |
-| BoomInstaller | v13.6.0.r9.2f1ac6f production | `308cd48362d57b34344f7b52b3219ce99aa585d112479dc1d9564127f06fa1d6` |
+| BoomInstaller | v13.6.0.r10.d356705 production | `f8a318b1c8f3041b56aaf198ed93e6a3a88a1405c140e5562e0240b76079b1f4` |
 
 版本号相等不是 KSU/Manager 兼容性的判据；兼容组合由 catalog 显式锁定。
 

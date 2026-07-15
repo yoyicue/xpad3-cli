@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "product_version": "0.1.4",
-  "catalog_version": "2026-07-15.7",
+  "product_version": "0.1.5",
+  "catalog_version": "2026-07-15.8",
   "profile": {
     "build_fingerprint": "alps/vnd_ls12_mt8797_wifi_64/ls12_mt8797_wifi_64:13/TP1A.220624.014/260:user/release-keys",
     "kernel_release_prefix": "4.19.191",
@@ -122,16 +122,16 @@
     },
     {
       "id": "boominstaller",
-      "filename": "BoomInstaller-v13.6.0.r9.2f1ac6f-production.apk",
+      "filename": "BoomInstaller-v13.6.0.r10.d356705-production.apk",
       "kind": "apk",
-      "version": "13.6.0.r9.2f1ac6f",
+      "version": "13.6.0.r10.d356705",
       "size": 3289241,
-      "sha256": "308cd48362d57b34344f7b52b3219ce99aa585d112479dc1d9564127f06fa1d6",
+      "sha256": "f8a318b1c8f3041b56aaf198ed93e6a3a88a1405c140e5562e0240b76079b1f4",
       "embedded": true,
       "mode": 384,
       "target": null,
       "package": "com.yoyicue.boominstaller",
-      "version_code": 9,
+      "version_code": 10,
       "cert_sha256": "3cb5b69579d23197ced8100818a85a46b821383a504b394a44cfe3e98ade78a2"
     }
   ]

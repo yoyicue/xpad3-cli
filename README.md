@@ -22,7 +22,8 @@ adb -s SERIAL shell /data/local/tmp/xpad2 install full
 - KernelSU 32547 / UAPI 2 以 late-load 方式在当前 boot 激活；
 - KernelSU Manager v3.2.5-22-gccfee6dc（versionCode 32547）；
 - `/data/local/tmp/xpad-install` v0.1.1 锁定构建；
-- BoomInstaller v13.6.0.r9.2f1ac6f、system 服务与普通开机自启动。
+- BoomInstaller v13.6.0.r10.d356705：Root 主服务通过隔离的 UID 1000 broker 安装 APK，
+  并在普通开机时优先恢复 Root、失败时回退到已配对的本地 ADB。
 
 再次执行同一命令是幂等的：已经通过包名、版本、证书、哈希和运行时探针验证的项目
 会跳过。普通重启后 APK 和 CLI 保留，只恢复 KSU。
