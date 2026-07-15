@@ -95,10 +95,12 @@ APK；`xpad-installer` 是独立仓库产生的设备 CLI `/data/local/tmp/xpad-
 
 ## 签名自更新
 
-默认 `xpad2 update` 从 `yoyicue/xpad2-cli` 的 GitHub Latest Release 获取固定名的
-`xpad2-update.json` 与签名。HTTPS 只负责传输；更新清单、目标 ELF、匹配的 cache ZIP、
-catalog 和 `/260` profile 均由内置 production RSA 公钥验证。目标 ELF 在替换前必须
-以候选进程完成一次自检，替换后再完成一次相同自检。
+默认 `xpad2 update` 通过 `api.github.com` 的 Latest Release 元数据定位固定名的
+`xpad2-update.json`、签名和 asset ID，再由 API 重定向到 release-assets 下载域；不要求
+设备能够直连 `github.com:443`。HTTPS 只负责传输，GitHub API JSON 本身不作为信任根；
+更新清单、目标 ELF、匹配的 cache ZIP、catalog 和 `/260` profile 均由内置 production
+RSA 公钥及 SHA-256 验证。目标 ELF 在替换前必须以候选进程完成一次自检，替换后再完成
+一次相同自检。每个网络对象最多三次有界重试，大文件每 15 秒输出一次真实进度。
 
 ```sh
 xpad2 update --check             # 只检查，不下载大文件、不修改设备

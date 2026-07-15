@@ -1,12 +1,13 @@
 # XPad2 CLI 设计
 
-状态：v0.2.1 已实现；v0.1.1 完成 BoomInstaller 依赖身份和公开分发材料，v0.1.2
+状态：v0.2.2 已实现；v0.1.1 完成 BoomInstaller 依赖身份和公开分发材料，v0.1.2
 增加可验证的 OTA 冻结策略与 Root 前强制门禁，v0.1.3 对齐 KernelSU 驱动与
 官方生产签名 Manager 的 32547 构建号，v0.1.4 升级 late-load v0.2.1，恢复
 `u:r:ksu:s0` Manager Root 且保持全局 SELinux Enforcing；v0.1.5 将 BoomInstaller
 升级到 Root 主服务 + 隔离 UID 1000 APK broker，并增加开机 Root/ADB 恢复链；v0.2.0
 增加 production RSA 签名的在线/离线自更新、候选双自检、版本隔离 cache 与失败回滚；
-v0.2.1 为 GitHub 多跳下载增加三次有界网络重试（2026-07-15）。
+v0.2.1 为 GitHub 多跳下载增加三次有界网络重试；v0.2.2 改用 GitHub Releases API
+发现 asset，并增加 15 秒下载进度（2026-07-15）。
 
 验收覆盖单 ELF、只读状态探针、3-worker IonStack 临时 Root、KernelSU late-load、
 CLI/APK 身份验证、临时 Root 安全收口、同 boot 幂等重跑、普通重启后恢复、RSA 签名
@@ -501,16 +502,20 @@ adb -s SERIAL shell /data/local/tmp/xpad2 \
 ## 9. 签名自更新
 
 更新清单使用固定文件名 `xpad2-update.json`，相邻的
-`xpad2-update.json.sig` 是 RSA-4096/SHA-256 原始签名。默认来源为：
+`xpad2-update.json.sig` 是 RSA-4096/SHA-256 原始签名。默认发现入口为：
 
 ```text
-https://github.com/yoyicue/xpad2-cli/releases/latest/download/xpad2-update.json
+https://api.github.com/repos/yoyicue/xpad2-cli/releases/latest
 ```
 
-指定 `--version X.Y.Z` 时改用该 tag 的不可变 Release URL。manifest 使用严格字段集合，
-锁定 schema/kind/channel/repository、目标 semver、catalog 版本、精确 `/260` profile，
-以及 ELF、cache ZIP、catalog 的文件名、大小、SHA-256 和 HTTPS URL。HTTPS 证书验证与
-Release RSA 签名缺一不可；远端 JSON 不能添加安装脚本或改变 xpad2 内置 provider。
+指定 `--version X.Y.Z` 时使用 API 的 `releases/tags/vX.Y.Z`。程序只接受 canonical
+repository 的 uploaded asset API URL，再由 API 重定向到 release-assets；这样在
+`github.com:443` 不可达但 API/asset 域可达的网络上仍能工作。API metadata 是不可信的
+运输索引，必须与签名 manifest 里的 tag、文件名、大小和可用 digest 交叉验证。
+manifest 使用严格字段集合，锁定 schema/kind/channel/repository、目标 semver、catalog
+版本、精确 `/260` profile，以及 ELF、cache ZIP、catalog 的文件名、大小、SHA-256 和
+HTTPS URL。HTTPS 证书验证与 Release RSA 签名缺一不可；远端 JSON 不能添加安装脚本或
+改变 xpad2 内置 provider。所有网络对象最多三次有界重试，大文件每 15 秒报告下载进度。
 
 更新事务顺序固定：
 
@@ -636,7 +641,7 @@ licenses/
 成为第二条版本线。固定名 update manifest 供 Latest URL 使用，离线 update ZIP 把
 manifest、签名、ELF 和 cache 打成一个可移动但仍需逐项验签的包。
 
-## 14. v0.2.1 验收标准
+## 14. v0.2.2 验收标准
 
 1. 单个 `xpad2` ELF 可以被推送到 `/data/local/tmp` 并正常执行。
 2. `status` 和 `doctor` 不进行 Root 或持久修改。

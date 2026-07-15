@@ -19,19 +19,19 @@ use std::io::{Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use zip::ZipArchive;
 
 const UPDATE_SCHEMA: u32 = 1;
 const UPDATE_KIND: &str = "xpad2-update";
 const UPDATE_CHANNEL: &str = "stable";
 const UPDATE_REPOSITORY: &str = "https://github.com/yoyicue/xpad2-cli";
+const GITHUB_API_REPOSITORY: &str = "https://api.github.com/repos/yoyicue/xpad2-cli";
 const MANIFEST_FILENAME: &str = "xpad2-update.json";
 const SIGNATURE_FILENAME: &str = "xpad2-update.json.sig";
-const DEFAULT_LATEST_MANIFEST_URL: &str =
-    "https://github.com/yoyicue/xpad2-cli/releases/latest/download/xpad2-update.json";
 const MAX_MANIFEST_SIZE: usize = 256 * 1024;
 const MAX_SIGNATURE_SIZE: usize = 64 * 1024;
+const MAX_RELEASE_METADATA_SIZE: usize = 2 * 1024 * 1024;
 const MAX_BINARY_SIZE: u64 = 128 * 1024 * 1024;
 const MAX_CACHE_ARCHIVE_SIZE: u64 = 512 * 1024 * 1024;
 const MAX_EXTRACTED_SIZE: u64 = 768 * 1024 * 1024;
@@ -90,6 +90,24 @@ struct CatalogIdentity {
     sha256: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    html_url: String,
+    draft: bool,
+    prerelease: bool,
+    assets: Vec<GitHubAsset>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GitHubAsset {
+    name: String,
+    url: String,
+    size: u64,
+    state: String,
+    digest: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VersionState {
     Available,
@@ -132,6 +150,7 @@ struct VerifiedManifest {
     raw: Vec<u8>,
     signature: Vec<u8>,
     offline_root: Option<PathBuf>,
+    github_release: Option<GitHubRelease>,
     source: String,
 }
 
@@ -348,6 +367,7 @@ pub fn apply(
     let candidate = acquire_asset(
         &verified.manifest.binary,
         verified.offline_root.as_deref(),
+        verified.github_release.as_ref(),
         &workspace.path,
         0o700,
         "xpad2 ELF",
@@ -356,6 +376,7 @@ pub fn apply(
     let cache_archive = acquire_asset(
         &verified.manifest.cache,
         verified.offline_root.as_deref(),
+        verified.github_release.as_ref(),
         &workspace.path,
         0o600,
         "离线 cache",
@@ -480,34 +501,76 @@ pub fn update_usage() -> &'static str {
 }
 
 fn acquire_manifest(request: &UpdateRequest, workspace: &Workspace) -> Result<VerifiedManifest> {
-    let (raw, signature, offline_root, source) = if let Some(path) = &request.offline {
-        let root = prepare_offline_root(path, &workspace.path)?;
-        let manifest_path = root.join(MANIFEST_FILENAME);
-        let signature_path = root.join(SIGNATURE_FILENAME);
-        (
-            read_regular_limited(&manifest_path, MAX_MANIFEST_SIZE)?,
-            read_regular_limited(&signature_path, MAX_SIGNATURE_SIZE)?,
-            Some(root.clone()),
-            format!("offline:{}", path.display()),
-        )
-    } else {
-        let url = manifest_url(request)?;
-        validate_https_url(&url, "manifest URL")?;
-        let signature_url = format!("{url}.sig");
-        let agent = http_agent();
-        println!("检查签名更新清单…");
-        (
-            fetch_small(&agent, &url, MAX_MANIFEST_SIZE, "update manifest")?,
-            fetch_small(
+    let (raw, signature, offline_root, github_release, source) =
+        if let Some(path) = &request.offline {
+            let root = prepare_offline_root(path, &workspace.path)?;
+            let manifest_path = root.join(MANIFEST_FILENAME);
+            let signature_path = root.join(SIGNATURE_FILENAME);
+            (
+                read_regular_limited(&manifest_path, MAX_MANIFEST_SIZE)?,
+                read_regular_limited(&signature_path, MAX_SIGNATURE_SIZE)?,
+                Some(root.clone()),
+                None,
+                format!("offline:{}", path.display()),
+            )
+        } else if let Some(url) = configured_manifest_url(request) {
+            validate_https_url(&url, "manifest URL")?;
+            let signature_url = format!("{url}.sig");
+            let agent = http_agent();
+            println!("检查签名更新清单…");
+            (
+                fetch_small(&agent, &url, MAX_MANIFEST_SIZE, "update manifest")?,
+                fetch_small(
+                    &agent,
+                    &signature_url,
+                    MAX_SIGNATURE_SIZE,
+                    "update manifest signature",
+                )?,
+                None,
+                None,
+                url,
+            )
+        } else {
+            let agent = http_agent();
+            let api_url = github_release_api_url(request);
+            println!("通过 GitHub Releases API 检查签名更新清单…");
+            let metadata = fetch_small_with_accept(
                 &agent,
-                &signature_url,
-                MAX_SIGNATURE_SIZE,
-                "update manifest signature",
-            )?,
-            None,
-            url,
-        )
-    };
+                &api_url,
+                MAX_RELEASE_METADATA_SIZE,
+                "GitHub release metadata",
+                "application/vnd.github+json",
+            )?;
+            let release: GitHubRelease = serde_json::from_slice(&metadata)?;
+            validate_github_release(&release, request.version.as_deref())?;
+            let manifest_asset = github_asset(&release, MANIFEST_FILENAME)?;
+            let signature_asset = github_asset(&release, SIGNATURE_FILENAME)?;
+            if manifest_asset.size == 0 || manifest_asset.size > MAX_MANIFEST_SIZE as u64 {
+                return Err(msg("GitHub update manifest asset has an invalid size"));
+            }
+            if signature_asset.size == 0 || signature_asset.size > MAX_SIGNATURE_SIZE as u64 {
+                return Err(msg("GitHub update signature asset has an invalid size"));
+            }
+            (
+                fetch_small_with_accept(
+                    &agent,
+                    &manifest_asset.url,
+                    MAX_MANIFEST_SIZE,
+                    "update manifest",
+                    "application/octet-stream",
+                )?,
+                fetch_small_with_accept(
+                    &agent,
+                    &signature_asset.url,
+                    MAX_SIGNATURE_SIZE,
+                    "update manifest signature",
+                    "application/octet-stream",
+                )?,
+                None,
+                Some(release),
+                api_url,
+            )
+        };
     catalog::verify_catalog_signature(&raw, &signature)?;
     let manifest: UpdateManifest = serde_json::from_slice(&raw)?;
     validate_manifest(&manifest)?;
@@ -519,30 +582,119 @@ fn acquire_manifest(request: &UpdateRequest, workspace: &Workspace) -> Result<Ve
             manifest.version, requested
         )));
     }
+    if let Some(release) = &github_release {
+        validate_github_release_manifest(release, &manifest)?;
+    }
     Ok(VerifiedManifest {
         manifest,
         raw,
         signature,
         offline_root,
+        github_release,
         source,
     })
 }
 
-fn manifest_url(request: &UpdateRequest) -> Result<String> {
+fn configured_manifest_url(request: &UpdateRequest) -> Option<String> {
     if let Some(url) = &request.manifest_url {
-        return Ok(url.clone());
+        return Some(url.clone());
     }
     if request.version.is_none()
         && let Some(url) = std::env::var_os("XPAD2_UPDATE_MANIFEST_URL")
     {
-        return Ok(url.to_string_lossy().into_owned());
+        return Some(url.to_string_lossy().into_owned());
     }
+    None
+}
+
+fn github_release_api_url(request: &UpdateRequest) -> String {
     if let Some(version) = &request.version {
-        return Ok(format!(
-            "{UPDATE_REPOSITORY}/releases/download/v{version}/{MANIFEST_FILENAME}"
+        return format!("{GITHUB_API_REPOSITORY}/releases/tags/v{version}");
+    }
+    format!("{GITHUB_API_REPOSITORY}/releases/latest")
+}
+
+fn validate_github_release(release: &GitHubRelease, requested: Option<&str>) -> Result<()> {
+    if release.draft || release.prerelease {
+        return Err(msg("GitHub update release is draft or prerelease"));
+    }
+    let version = release
+        .tag_name
+        .strip_prefix('v')
+        .ok_or_else(|| msg("GitHub update release tag is not v-prefixed semver"))?;
+    let parsed = parse_canonical_version(version)?;
+    if !parsed.pre.is_empty() || !parsed.build.is_empty() {
+        return Err(msg(
+            "GitHub stable release tag is not a stable semantic version",
         ));
     }
-    Ok(DEFAULT_LATEST_MANIFEST_URL.to_string())
+    if let Some(requested) = requested
+        && version != requested
+    {
+        return Err(msg(format!(
+            "GitHub release tag {} != requested v{}",
+            release.tag_name, requested
+        )));
+    }
+    let expected_page = format!("{UPDATE_REPOSITORY}/releases/tag/{}", release.tag_name);
+    if release.html_url != expected_page {
+        return Err(msg(
+            "GitHub release page does not belong to the canonical repository",
+        ));
+    }
+    Ok(())
+}
+
+fn github_asset<'a>(release: &'a GitHubRelease, name: &str) -> Result<&'a GitHubAsset> {
+    let mut matches = release.assets.iter().filter(|asset| asset.name == name);
+    let asset = matches
+        .next()
+        .ok_or_else(|| msg(format!("GitHub release asset missing: {name}")))?;
+    if matches.next().is_some() {
+        return Err(msg(format!(
+            "GitHub release contains duplicate asset: {name}"
+        )));
+    }
+    if asset.state != "uploaded" {
+        return Err(msg(format!("GitHub release asset is not uploaded: {name}")));
+    }
+    validate_https_url(&asset.url, "GitHub asset API URL")?;
+    let parsed = url::Url::parse(&asset.url)
+        .map_err(|error| msg(format!("invalid GitHub asset API URL: {error}")))?;
+    let expected_prefix = format!("{GITHUB_API_REPOSITORY}/releases/assets/");
+    if parsed.host_str() != Some("api.github.com") || !asset.url.starts_with(&expected_prefix) {
+        return Err(msg(format!("untrusted GitHub asset API URL for {name}")));
+    }
+    Ok(asset)
+}
+
+fn validate_github_release_manifest(
+    release: &GitHubRelease,
+    manifest: &UpdateManifest,
+) -> Result<()> {
+    if release.tag_name != format!("v{}", manifest.version)
+        || release.html_url != manifest.release_url
+    {
+        return Err(msg(
+            "GitHub release identity does not match signed update manifest",
+        ));
+    }
+    for (locked, label) in [(&manifest.binary, "binary"), (&manifest.cache, "cache")] {
+        let asset = github_asset(release, &locked.filename)?;
+        if asset.size != locked.size {
+            return Err(msg(format!(
+                "GitHub {label} asset size does not match signed manifest"
+            )));
+        }
+        if let Some(digest) = &asset.digest
+            && digest != &format!("sha256:{}", locked.sha256)
+        {
+            return Err(msg(format!(
+                "GitHub {label} asset digest does not match signed manifest"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn prepare_offline_root(source: &Path, workspace: &Path) -> Result<PathBuf> {
@@ -712,10 +864,41 @@ fn http_agent() -> ureq::Agent {
         .build()
 }
 
+fn request(agent: &ureq::Agent, url: &str, accept: Option<&str>) -> ureq::Request {
+    let mut request = agent.get(url);
+    if let Some(accept) = accept {
+        request = request.set("Accept", accept);
+    }
+    if url.starts_with("https://api.github.com/") {
+        request = request.set("X-GitHub-Api-Version", "2022-11-28");
+    }
+    request
+}
+
 fn fetch_small(agent: &ureq::Agent, url: &str, max: usize, label: &str) -> Result<Vec<u8>> {
+    fetch_small_with_optional_accept(agent, url, max, label, None)
+}
+
+fn fetch_small_with_accept(
+    agent: &ureq::Agent,
+    url: &str,
+    max: usize,
+    label: &str,
+    accept: &str,
+) -> Result<Vec<u8>> {
+    fetch_small_with_optional_accept(agent, url, max, label, Some(accept))
+}
+
+fn fetch_small_with_optional_accept(
+    agent: &ureq::Agent,
+    url: &str,
+    max: usize,
+    label: &str,
+    accept: Option<&str>,
+) -> Result<Vec<u8>> {
     let mut last_error = None;
     for attempt in 1..=DOWNLOAD_ATTEMPTS {
-        match fetch_small_once(agent, url, max, label) {
+        match fetch_small_once(agent, url, max, label, accept) {
             Ok(bytes) => return Ok(bytes),
             Err(error) => {
                 if attempt < DOWNLOAD_ATTEMPTS {
@@ -731,9 +914,14 @@ fn fetch_small(agent: &ureq::Agent, url: &str, max: usize, label: &str) -> Resul
     Err(last_error.unwrap_or_else(|| msg(format!("{label} download failed"))))
 }
 
-fn fetch_small_once(agent: &ureq::Agent, url: &str, max: usize, label: &str) -> Result<Vec<u8>> {
-    let response = agent
-        .get(url)
+fn fetch_small_once(
+    agent: &ureq::Agent,
+    url: &str,
+    max: usize,
+    label: &str,
+    accept: Option<&str>,
+) -> Result<Vec<u8>> {
+    let response = request(agent, url, accept)
         .call()
         .map_err(|error| msg(format!("HTTPS {label} download failed: {error}")))?;
     if let Some(length) = response.header("Content-Length")
@@ -758,6 +946,7 @@ fn fetch_small_once(agent: &ureq::Agent, url: &str, max: usize, label: &str) -> 
 fn acquire_asset(
     asset: &UpdateAsset,
     offline_root: Option<&Path>,
+    github_release: Option<&GitHubRelease>,
     workspace: &Path,
     mode: u32,
     label: &str,
@@ -774,7 +963,13 @@ fn acquire_asset(
             asset.filename,
             asset.size as f64 / 1024.0 / 1024.0
         );
-        download_file(&asset.url, &target, asset, mode, label)?;
+        let (url, accept) = if let Some(release) = github_release {
+            let transport = github_asset(release, &asset.filename)?;
+            (transport.url.as_str(), Some("application/octet-stream"))
+        } else {
+            (asset.url.as_str(), None)
+        };
+        download_file(url, &target, asset, mode, label, accept)?;
     }
     verify_file_identity(&target, asset, label)?;
     Ok(target)
@@ -786,11 +981,12 @@ fn download_file(
     asset: &UpdateAsset,
     mode: u32,
     label: &str,
+    accept: Option<&str>,
 ) -> Result<()> {
     let agent = http_agent();
     let mut last_error = None;
     for attempt in 1..=DOWNLOAD_ATTEMPTS {
-        match download_file_once(&agent, url, target, asset, mode, label) {
+        match download_file_once(&agent, url, target, asset, mode, label, accept) {
             Ok(()) => return Ok(()),
             Err(error) => {
                 if attempt < DOWNLOAD_ATTEMPTS {
@@ -813,9 +1009,9 @@ fn download_file_once(
     asset: &UpdateAsset,
     mode: u32,
     label: &str,
+    accept: Option<&str>,
 ) -> Result<()> {
-    let response = agent
-        .get(url)
+    let response = request(agent, url, accept)
         .call()
         .map_err(|error| msg(format!("HTTPS {label} download failed: {error}")))?;
     if let Some(length) = response.header("Content-Length")
@@ -843,6 +1039,7 @@ fn download_file_once(
         let mut reader = response.into_reader();
         let mut hasher = Sha256::new();
         let mut total = 0u64;
+        let mut last_progress = Instant::now();
         let mut buffer = [0u8; 128 * 1024];
         loop {
             let count = reader
@@ -859,6 +1056,15 @@ fn download_file_once(
             }
             output.write_all(&buffer[..count]).at(&partial)?;
             hasher.update(&buffer[..count]);
+            if last_progress.elapsed() >= Duration::from_secs(15) {
+                eprintln!(
+                    "{label} 下载进度：{:.1}/{:.1} MiB（{:.0}%）",
+                    total as f64 / 1024.0 / 1024.0,
+                    asset.size as f64 / 1024.0 / 1024.0,
+                    total as f64 * 100.0 / asset.size as f64
+                );
+                last_progress = Instant::now();
+            }
         }
         output.sync_all().at(&partial)?;
         let digest = format!("{:x}", hasher.finalize());
@@ -870,6 +1076,10 @@ fn download_file_once(
         }
         fs::set_permissions(&partial, fs::Permissions::from_mode(mode)).at(&partial)?;
         fs::rename(&partial, target).at(target)?;
+        println!(
+            "{label} 下载完成：{:.1} MiB",
+            total as f64 / 1024.0 / 1024.0
+        );
         sync_parent(target)
     })();
     if result.is_err() {
@@ -1250,6 +1460,38 @@ mod tests {
         }
     }
 
+    fn github_release() -> GitHubRelease {
+        let asset = |name: &str, size: u64, digest: Option<String>, id: u64| GitHubAsset {
+            name: name.to_string(),
+            url: format!("https://api.github.com/repos/yoyicue/xpad2-cli/releases/assets/{id}"),
+            size,
+            state: "uploaded".to_string(),
+            digest,
+        };
+        GitHubRelease {
+            tag_name: "v0.2.0".to_string(),
+            html_url: "https://github.com/yoyicue/xpad2-cli/releases/tag/v0.2.0".to_string(),
+            draft: false,
+            prerelease: false,
+            assets: vec![
+                asset(MANIFEST_FILENAME, 1024, None, 1),
+                asset(SIGNATURE_FILENAME, 512, None, 2),
+                asset(
+                    "xpad2-v0.2.0-android-arm64",
+                    1,
+                    Some(format!("sha256:{}", "a".repeat(64))),
+                    3,
+                ),
+                asset(
+                    "xpad2-cache-v0.2.0.zip",
+                    1,
+                    Some(format!("sha256:{}", "b".repeat(64))),
+                    4,
+                ),
+            ],
+        }
+    }
+
     #[test]
     fn strict_manifest_accepts_the_release_shape() {
         validate_manifest(&manifest()).unwrap();
@@ -1292,6 +1534,22 @@ mod tests {
             "--allow-downgrade".to_string(),
         ];
         assert!(parse_args(&args).is_ok());
+    }
+
+    #[test]
+    fn github_api_transport_is_bound_to_the_signed_release() {
+        let release = github_release();
+        validate_github_release(&release, Some("0.2.0")).unwrap();
+        validate_github_release_manifest(&release, &manifest()).unwrap();
+
+        let mut wrong_host = github_release();
+        wrong_host.assets[0].url =
+            "https://example.invalid/repos/yoyicue/xpad2-cli/releases/assets/1".to_string();
+        assert!(github_asset(&wrong_host, MANIFEST_FILENAME).is_err());
+
+        let mut wrong_digest = github_release();
+        wrong_digest.assets[2].digest = Some(format!("sha256:{}", "f".repeat(64)));
+        assert!(validate_github_release_manifest(&wrong_digest, &manifest()).is_err());
     }
 
     #[test]
