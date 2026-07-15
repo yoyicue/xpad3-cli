@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "product_version": "0.1.3",
+  "product_version": "0.1.4",
   "sources": [
     {
       "component": "ionstack",
@@ -12,16 +12,16 @@
     {
       "component": "ksud-xpad2",
       "repository": "https://github.com/yoyicue/xpad2-ksu-lateload",
-      "commit": "c3099636eb863ac9d476a40c0a582bc876415d8a",
-      "tag": "v0.2.0",
+      "commit": "9af3e0ea817fcbdf45b9cb08fc8b9bd1910b1cc3",
+      "tag": "v0.2.1",
       "artifact": "ksud-xpad2",
       "license": "GPL-3.0-only"
     },
     {
       "component": "ksu-module",
       "repository": "https://github.com/yoyicue/xpad2-ksu-lateload",
-      "commit": "c3099636eb863ac9d476a40c0a582bc876415d8a",
-      "tag": "v0.2.0",
+      "commit": "9af3e0ea817fcbdf45b9cb08fc8b9bd1910b1cc3",
+      "tag": "v0.2.1",
       "artifact": "kernelsu-xpad2-4.19.191.ko",
       "license": "GPL-2.0-only"
     },
