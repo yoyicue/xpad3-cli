@@ -11,21 +11,18 @@ trap 'rm -rf "$tmp_dir"' EXIT
   cd "$DIST"
   shasum -a 256 -c SHA256SUMS
 )
-manager_filename=$(jq -r '.artifacts[] | select(.id == "ksu-manager") | .filename' \
-  "$ROOT/assets.lock.json")
-manager_sha=$(jq -r '.artifacts[] | select(.id == "ksu-manager") | .sha256' \
-  "$ROOT/assets.lock.json")
-manager_size=$(jq -r '.artifacts[] | select(.id == "ksu-manager") | .size' \
-  "$ROOT/assets.lock.json")
-[[ "$(shasum -a 256 "$DIST/$manager_filename" | awk '{print $1}')" == \
-  "$manager_sha" ]] || {
-  printf 'standalone Manager SHA-256 mismatch\n' >&2
-  exit 1
-}
-[[ "$(wc -c < "$DIST/$manager_filename" | tr -d ' ')" == "$manager_size" ]] || {
-  printf 'standalone Manager size mismatch\n' >&2
-  exit 1
-}
+while IFS=$'\t' read -r manager_id manager_filename manager_sha manager_size; do
+  [[ "$(shasum -a 256 "$DIST/$manager_filename" | awk '{print $1}')" == \
+    "$manager_sha" ]] || {
+    printf 'standalone Manager SHA-256 mismatch: %s\n' "$manager_id" >&2
+    exit 1
+  }
+  [[ "$(wc -c < "$DIST/$manager_filename" | tr -d ' ')" == "$manager_size" ]] || {
+    printf 'standalone Manager size mismatch: %s\n' "$manager_id" >&2
+    exit 1
+  }
+done < <(jq -r '.artifacts[] | select(.id == "ksu-manager" or .id == "suu-manager") |
+  [.id,.filename,.sha256,(.size|tostring)] | @tsv' "$ROOT/assets.lock.json")
 unzip -q "$DIST/xpad2-cache-v$VERSION.zip" -d "$tmp_dir"
 unzip -q "$DIST/xpad2-v$VERSION-android-arm64.zip" -d "$tmp_dir"
 unzip -q "$DIST/xpad2-update-v$VERSION.zip" -d "$tmp_dir"
@@ -117,6 +114,8 @@ for required in \
   licenses/BoomInstaller-NOTICE.md \
   licenses/KernelSU-userspace-GPL-3.0-LICENSE \
   licenses/KernelSU-kernel-GPL-2.0-LICENSE \
+  licenses/SukiSU-userspace-GPL-3.0-LICENSE \
+  licenses/SukiSU-kernel-GPL-2.0-LICENSE \
   licenses/xpad-installer-LICENSE \
   licenses/xpad2-ionstack-poc-LICENSE \
   licenses/xpad2-ionstack-poc-Apache-2.0-LICENSE; do
@@ -140,6 +139,10 @@ jq -e '.sources[] | select(.component == "boominstaller") |
 jq -e '[.sources[] | select(.component == "ksud-xpad2" or .component == "ksu-module") |
   .repository == "https://github.com/yoyicue/xpad2-ksu-lateload"] |
   length == 2 and all' \
+  "$package/sources.lock.json" >/dev/null
+jq -e '[.sources[] | select(.component == "suu-ksud" or .component == "suu-module" or .component == "sukisu-manager") |
+  .repository == "https://github.com/yoyicue/xpad2-sukisu-lateload"] |
+  length == 3 and all' \
   "$package/sources.lock.json" >/dev/null
 
 file "$DIST/xpad2-v$VERSION-android-arm64" | grep -q 'ARM aarch64'

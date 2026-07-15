@@ -341,6 +341,11 @@ pub fn export_logs(paths: &Paths, destination: &Path) -> Result<PathBuf> {
             &["package", "me.weishu.kernelsu"],
         )?;
         capture(
+            &staging.join("suu-package.txt"),
+            "/system/bin/dumpsys",
+            &["package", "com.sukisu.ultra"],
+        )?;
+        capture(
             &staging.join("boom-package.txt"),
             "/system/bin/dumpsys",
             &["package", "com.yoyicue.boominstaller"],

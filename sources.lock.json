@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "product_version": "0.3.0",
+  "product_version": "0.4.0",
   "sources": [
     {
       "component": "ionstack",
@@ -24,6 +24,32 @@
       "tag": "v0.2.1",
       "artifact": "kernelsu-xpad2-4.19.191.ko",
       "license": "GPL-2.0-only"
+    },
+    {
+      "component": "suu-ksud",
+      "repository": "https://github.com/yoyicue/xpad2-sukisu-lateload",
+      "commit": "cedafd28bff374a7051b73b98b345c1ff8463e8d",
+      "tag": "v0.1.0",
+      "artifact": "ksud-sukisu-xpad2",
+      "license": "GPL-3.0-only"
+    },
+    {
+      "component": "suu-module",
+      "repository": "https://github.com/yoyicue/xpad2-sukisu-lateload",
+      "commit": "cedafd28bff374a7051b73b98b345c1ff8463e8d",
+      "tag": "v0.1.0",
+      "artifact": "sukisu-xpad2-4.19.191.ko",
+      "license": "GPL-2.0-only"
+    },
+    {
+      "component": "sukisu-manager",
+      "repository": "https://github.com/yoyicue/xpad2-sukisu-lateload",
+      "version": "v4.1.3",
+      "commit": "cedafd28bff374a7051b73b98b345c1ff8463e8d",
+      "tag": "v0.1.0",
+      "artifact": "SukiSU_v4.1.3_40796-release.apk",
+      "version_code": 40796,
+      "license": "GPL-3.0-only"
     },
     {
       "component": "xpad-installer",

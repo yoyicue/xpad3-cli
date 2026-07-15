@@ -131,25 +131,28 @@ pub fn install_arbitrary_cli(
     Ok(target)
 }
 
-pub fn ensure_ksu(
+pub fn ensure_runtime(
     catalog: &Catalog,
     paths: &Paths,
+    runtime_id: &str,
     root: &RootSession,
     log: &mut TransactionLog,
 ) -> Result<bool> {
     root.check_boot()?;
-    let resolved = catalog.resolve("ksud", paths)?;
+    let spec = device::runtime_spec(runtime_id)
+        .ok_or_else(|| msg(format!("unknown runtime: {runtime_id}")))?;
+    let resolved = catalog.resolve(spec.loader_artifact, paths)?;
     let bytes = verified_bytes(&resolved)?;
-    let diagnostic = paths.state.join("ksud-xpad2");
+    let diagnostic = paths.state.join(spec.diagnostic_filename);
     atomic_write(&diagnostic, &bytes, 0o700)?;
-    let before = device::ksu_status(paths);
+    let before = device::runtime_status(paths, spec);
     if before.state == ComponentState::Active {
         log.event(
             "component",
             "skipped",
-            json!({"id": "ksu", "reason": "healthy in current boot"}),
+            json!({"id": spec.id, "reason": "healthy in current boot"}),
         )?;
-        println!("✓ ksu: 当前启动周期已健康加载，跳过");
+        println!("✓ {}: 当前启动周期已健康加载，跳过", spec.id);
         return Ok(false);
     }
     if before.state == ComponentState::NeedsReboot {
@@ -161,24 +164,35 @@ pub fn ensure_ksu(
     }
     if device::ksu_module_loaded() {
         return Err(needs_reboot(before.detail.unwrap_or_else(|| {
-            "KernelSU module is already loaded but cannot be verified; refusing online unload or replacement".to_string()
+            format!(
+                "a KernelSU-family module is already loaded; refusing online switch to {}",
+                spec.display_name
+            )
         })));
     }
     let path = diagnostic
         .to_str()
-        .ok_or_else(|| msg("invalid diagnostic ksud path"))?;
-    let command = format!("{} late-load --kmi xpad2-4.19.191", shell_quote(path));
+        .ok_or_else(|| msg("invalid runtime diagnostic path"))?;
+    let command = format!(
+        "{} late-load --kmi {}",
+        shell_quote(path),
+        shell_quote(spec.kmi)
+    );
     log.event(
         "component",
         "running",
-        json!({"id": "ksu", "action": "late-load"}),
+        json!({"id": spec.id, "action": "late-load", "runtime": spec.display_name}),
     )?;
     let output = root.exec(&command)?;
-    log.command_result("ksu late-load", output.status == 0, &output.text)?;
+    log.command_result(
+        &format!("{} late-load", spec.id),
+        output.status == 0,
+        &output.text,
+    )?;
     if output.status != 0 {
         return Err(msg(format!(
-            "KernelSU late-load failed with exit {}: {}",
-            output.status, output.text
+            "{} late-load failed with exit {}: {}",
+            spec.display_name, output.status, output.text
         )));
     }
     // `ksud late-load` daemonizes before the child loads the embedded module.
@@ -188,32 +202,37 @@ pub fn ensure_ksu(
     log.event(
         "component",
         "waiting",
-        json!({"id": "ksu", "deadline_seconds": 30}),
+        json!({"id": spec.id, "deadline_seconds": 30}),
     )?;
     let deadline = Instant::now() + Duration::from_secs(30);
-    let mut after = device::ksu_status(paths);
+    let mut after = device::runtime_status(paths, spec);
     while after.state != ComponentState::Active && Instant::now() < deadline {
         root.check_boot()?;
         thread::sleep(Duration::from_millis(250));
-        after = device::ksu_status(paths);
+        after = device::runtime_status(paths, spec);
     }
     if after.state != ComponentState::Active {
         let detail = after.detail.unwrap_or_default();
         if device::ksu_module_loaded() {
             return Err(needs_reboot(format!(
-                "KernelSU is resident but failed locked debug-info verification: {detail}"
+                "{} is resident but failed locked debug-info verification: {detail}",
+                spec.display_name
             )));
         }
         return Err(msg(format!(
-            "KernelSU late-load child did not register the module within 30 seconds: {detail}"
+            "{} late-load child did not register the module within 30 seconds: {detail}",
+            spec.display_name
         )));
     }
     log.event(
         "component",
         "active",
-        json!({"id": "ksu", "version": 32547, "uapi": 2, "runtime": "late-load"}),
+        json!({"id": spec.id, "version": spec.version, "runtime": "late-load"}),
     )?;
-    println!("✓ ksu: 32547 / UAPI 2 / late-load 已验证");
+    println!(
+        "✓ {}: {} / {} / late-load 已验证",
+        spec.id, spec.display_name, spec.version
+    );
     Ok(true)
 }
 

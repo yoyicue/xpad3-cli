@@ -136,8 +136,14 @@ fn command_status(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<(
 fn command_list(catalog: &Catalog) {
     println!("ota              policy   freeze /260 system OTA package for user 0");
     println!("ksu              runtime  KernelSU 32547 / UAPI 2 / current boot");
+    println!("suu              runtime  SukiSU Ultra 40796 / current boot");
     println!("installer-backup policy   managed 0044 UID 10072 fallback installer");
-    for id in ["ksu-manager", "xpad-installer", "boominstaller"] {
+    for id in [
+        "ksu-manager",
+        "suu-manager",
+        "xpad-installer",
+        "boominstaller",
+    ] {
         if let Ok(a) = catalog.artifact(id) {
             println!(
                 "{:<16} {:<8} {}",
@@ -147,7 +153,8 @@ fn command_list(catalog: &Catalog) {
             );
         }
     }
-    println!("full             bundle   ksu + managers + xpad-installer + installer-backup");
+    println!("full             bundle   default: ksu + matching Manager + installers");
+    println!("suu-full         bundle   suu + matching Manager + installers");
 }
 
 fn command_info(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
@@ -168,6 +175,13 @@ fn command_info(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()>
             "id: ksu\nkind: runtime\nversion: 32547\nuapi: 2\nkmi: xpad2-4.19.191\nlifecycle: current-boot"
         );
         render_component(&device::ksu_status(paths));
+        return Ok(());
+    }
+    if id == "suu" {
+        println!(
+            "id: suu\nkind: runtime\nversion: 40796\nflags/features: 0x5\nkmi: xpad2-sukisu-4.19.191\nlifecycle: current-boot"
+        );
+        render_component(&device::suu_status(paths));
         return Ok(());
     }
     if id == "installer-backup" {
@@ -251,6 +265,10 @@ fn command_verify(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<(
             .chain(snapshot.components.iter())
             .collect()
     };
+    let verifying_all = args.is_empty();
+    let supported_runtime_active = snapshot.components.iter().any(|component| {
+        matches!(component.id.as_str(), "ksu" | "suu") && component.state == ComponentState::Active
+    });
     let mut failed = Vec::new();
     for state in selected {
         render_component(state);
@@ -258,7 +276,12 @@ fn command_verify(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<(
             "temporary-root" => {
                 matches!(state.state, ComponentState::Absent | ComponentState::Active)
             }
-            "ksu" => state.state == ComponentState::Active,
+            "ksu" | "suu" => {
+                state.state == ComponentState::Active
+                    || (verifying_all
+                        && supported_runtime_active
+                        && state.state == ComponentState::Ready)
+            }
             "ota" => state.state == ComponentState::Active,
             "boominstaller" => state.state == ComponentState::Active,
             "installer-backup" => state.state == ComponentState::Active,
@@ -346,9 +369,7 @@ fn command_unfreeze(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result
 
 fn command_install(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
     let Some(first) = args.first().map(String::as_str) else {
-        return Err(msg(
-            "usage: xpad2 install COMPONENT... | cli FILE [--name NAME] | apk FILE",
-        ));
+        return transaction::install_components(catalog, paths, args);
     };
     match first {
         "cli" => install_arbitrary_cli(catalog, paths, &args[1..]),
@@ -393,7 +414,7 @@ fn install_arbitrary_apk(catalog: &Catalog, paths: &Paths, args: &[String]) -> R
 }
 
 fn command_repair(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
-    if args.len() != 1 || args[0] == "full" {
+    if args.len() != 1 || matches!(args[0].as_str(), "full" | "suu-full") {
         return Err(msg("usage: xpad2 repair COMPONENT"));
     }
     if args[0] == "installer-backup" {
@@ -588,8 +609,8 @@ fn yes_no(value: bool) -> &'static str {
 fn print_help() {
     println!(
         "xpad2 {} - XPad2 /260 root-capable signed installer\n\n\
-Usage:\n  xpad2 status [--json]\n  xpad2 doctor\n  xpad2 list | info COMPONENT\n  xpad2 update [--check] [--version VERSION] [--offline DIRECTORY_OR_ZIP]\n  xpad2 root [-- COMMAND ARG...]\n  xpad2 freeze ota | unfreeze ota\n  xpad2 install COMPONENT...\n  xpad2 install cli FILE [--name NAME]\n  xpad2 install apk FILE\n  xpad2 verify [COMPONENT]\n  xpad2 repair COMPONENT\n  xpad2 cleanup\n  xpad2 logs export DIRECTORY\n  xpad2 cache path|list|verify|import DIRECTORY|prune|clear\n\n\
-Built-ins: ota, ksu, ksu-manager, xpad-installer, installer-backup, boominstaller, full\n\
+Usage:\n  xpad2 status [--json]\n  xpad2 doctor\n  xpad2 list | info COMPONENT\n  xpad2 update [--check] [--version VERSION] [--offline DIRECTORY_OR_ZIP]\n  xpad2 root [-- COMMAND ARG...]\n  xpad2 freeze ota | unfreeze ota\n  xpad2 install [COMPONENT...]             # default: full (KSU)\n  xpad2 install cli FILE [--name NAME]\n  xpad2 install apk FILE\n  xpad2 verify [COMPONENT]\n  xpad2 repair COMPONENT\n  xpad2 cleanup\n  xpad2 logs export DIRECTORY\n  xpad2 cache path|list|verify|import DIRECTORY|prune|clear\n\n\
+Built-ins: ota, ksu, suu, ksu-manager, suu-manager, xpad-installer, installer-backup, boominstaller, full, suu-full\n\
 Global: --cache-dir DIRECTORY (or XPAD2_CACHE_DIR)\n\n\
 Self-update: --reinstall repairs the same version; a downgrade also requires --allow-downgrade.\n\n\
 Exit 75 means an ordinary reboot is required.",

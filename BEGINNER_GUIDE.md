@@ -49,30 +49,30 @@ adb -s 你的设备序列号
 ## 3. 下载并校验 xpad2
 
 当前正式版本是
-[`v0.3.0`](https://github.com/yoyicue/xpad2-cli/releases/tag/v0.3.0)。只需要下载：
+[`v0.4.0`](https://github.com/yoyicue/xpad2-cli/releases/tag/v0.4.0)。只需要下载：
 
 ```text
-xpad2-v0.3.0-android-arm64
+xpad2-v0.4.0-android-arm64
 ```
 
 macOS 或 Linux 可以直接执行：
 
 ```sh
-curl -fLO https://github.com/yoyicue/xpad2-cli/releases/download/v0.3.0/xpad2-v0.3.0-android-arm64
-shasum -a 256 xpad2-v0.3.0-android-arm64
+curl -fLO https://github.com/yoyicue/xpad2-cli/releases/download/v0.4.0/xpad2-v0.4.0-android-arm64
+shasum -a 256 xpad2-v0.4.0-android-arm64
 ```
 
 Windows PowerShell 可以执行：
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/yoyicue/xpad2-cli/releases/download/v0.3.0/xpad2-v0.3.0-android-arm64" -OutFile "xpad2-v0.3.0-android-arm64"
-Get-FileHash .\xpad2-v0.3.0-android-arm64 -Algorithm SHA256
+Invoke-WebRequest -Uri "https://github.com/yoyicue/xpad2-cli/releases/download/v0.4.0/xpad2-v0.4.0-android-arm64" -OutFile "xpad2-v0.4.0-android-arm64"
+Get-FileHash .\xpad2-v0.4.0-android-arm64 -Algorithm SHA256
 ```
 
 正确的 SHA-256 是：
 
 ```text
-bb9f63a3dc7072365522dd2cf5ece18eb8501ccb2be84ddfcab04c775440c46d
+fdc17a135e6652d5b13c057ceecf1fc06a6e672291bd58c7660bfa6e65f3a8b2
 ```
 
 哈希不一致时不要继续，重新下载文件。
@@ -82,7 +82,7 @@ bb9f63a3dc7072365522dd2cf5ece18eb8501ccb2be84ddfcab04c775440c46d
 在下载文件所在目录执行：
 
 ```sh
-adb push xpad2-v0.3.0-android-arm64 /data/local/tmp/xpad2
+adb push xpad2-v0.4.0-android-arm64 /data/local/tmp/xpad2
 adb shell chmod 700 /data/local/tmp/xpad2
 adb shell /data/local/tmp/xpad2 version
 ```
@@ -90,7 +90,7 @@ adb shell /data/local/tmp/xpad2 version
 最后一条命令应显示：
 
 ```text
-xpad2 0.3.0 (catalog 2026-07-15.14)
+xpad2 0.4.0 (catalog 2026-07-16.1)
 ```
 
 这就表示 `xpad2` 已经安装到了：
@@ -118,10 +118,10 @@ SELinux=Enforcing
 
 ## 6. 一键完成安装
 
-小白用户只需要使用下面这一条命令：
+小白用户只需要使用下面这一条命令；不写组件时默认就是 `full`：
 
 ```sh
-adb shell /data/local/tmp/xpad2 install full
+adb shell /data/local/tmp/xpad2 install
 ```
 
 它会自动完成：
@@ -144,7 +144,7 @@ adb shell /data/local/tmp/xpad2 install full
 xpad2 root
 ```
 
-`install full` 会自动管理临时 Root，并在结束时进行安全清理。
+默认 `full` 会自动管理临时 Root，并在结束时进行安全清理。
 
 ## 7. 判断是否成功
 
@@ -161,13 +161,26 @@ SELinux=Enforcing
 temporary-root  absent
 ota             active
 ksu             active
+suu             ready
 ksu-manager     installed
 xpad-installer  installed
 installer-backup active
 boominstaller   active
 ```
 
-再次执行 `install full` 是安全的。已经验证成功的项目会直接跳过，不会重复安装。
+再次执行 `install` 是安全的。已经验证成功的项目会直接跳过，不会重复安装。
+
+### 可选：使用 SukiSU Ultra
+
+默认 `full` 保持 KernelSU，避免既有用户升级后被静默切换。只有明确希望使用 SukiSU
+Ultra 时，先普通重启，再执行：
+
+```sh
+adb shell /data/local/tmp/xpad2 install suu-full
+```
+
+该 profile 使用 SukiSU Ultra 40796 与官方 Manager v4.1.3；其余安装器组件相同。
+`ksu` 和 `suu` 同一 boot 不能并存，不能在已经加载其中一个后在线切换。
 
 ## 8. 如果提示需要普通重启
 
@@ -176,14 +189,14 @@ boominstaller   active
 - 6 轮 Root 机会全部失败；
 - 出现 `process is bad`；
 - 程序退出码是 `75`；
-- 提示 KSU 状态不兼容或当前 boot 不再适合继续尝试。
+- 提示 KSU/SUU 状态不兼容或当前 boot 不再适合继续尝试。
 
 可以在 Pad 上正常关机再开机，或者执行：
 
 ```sh
 adb reboot
 adb wait-for-device
-adb shell /data/local/tmp/xpad2 install full
+adb shell /data/local/tmp/xpad2 install
 ```
 
 不要在同一个失败的启动周期里反复强行执行 Root。
@@ -192,14 +205,18 @@ adb shell /data/local/tmp/xpad2 install full
 
 普通重启后：
 
-- `xpad2`、两个 APK、`xpad-installer`、`installer-backup` 和 OTA 冻结状态仍然保留；
-- KernelSU late-load 只属于当前启动周期，可能显示为 inactive 或 absent。
+- `xpad2`、对应 Manager、BoomInstaller、`xpad-installer`、`installer-backup` 和 OTA
+  冻结状态仍然保留；
+- KSU/SUU late-load 只属于当前启动周期，可能显示为 inactive 或 absent。
 
-需要恢复 KSU 时重新执行：
+需要恢复默认 KSU profile 时重新执行：
 
 ```sh
-adb shell /data/local/tmp/xpad2 install full
+adb shell /data/local/tmp/xpad2 install
 ```
+
+此前选择 SUU 的设备则继续执行 `xpad2 install suu-full`，不要改用默认 `install`，除非
+已经普通重启且确实要切回 KSU。
 
 已经安装好的 APK 和 CLI 会被跳过，只恢复缺失的运行时状态。
 
@@ -213,7 +230,8 @@ adb shell /data/local/tmp/xpad2 repair installer-backup
 
 ## 10. 恢复系统 OTA
 
-`install full` 会冻结系统 OTA 主程序。只有确实准备进行官方系统升级时，才执行：
+`install`、`install full` 和 `install suu-full` 都会冻结系统 OTA 主程序。只有确实准备
+进行官方系统升级时，才执行：
 
 ```sh
 adb shell /data/local/tmp/xpad2 unfreeze ota
@@ -272,7 +290,7 @@ adb shell /data/local/tmp/xpad2 update --offline /data/local/tmp/xpad2-update-vX
 adb shell rm /data/local/tmp/xpad2-update-vX.Y.Z.zip
 ```
 
-如果当前仍是 v0.1.x，需要先按第 3–4 节手工覆盖到当前 v0.3.0 一次；旧版本没有
+如果当前仍是 v0.1.x，需要先按第 3–4 节手工覆盖到当前 v0.4.0 一次；旧版本没有
 自更新命令。
 
 ## 常见问题
@@ -291,9 +309,9 @@ adb -s 设备序列号 shell /data/local/tmp/xpad2 status
 
 ### 有 `xpad2.apk` 吗？
 
-没有。`xpad2` 是 Android ARM64 CLI；KernelSU Manager 和 BoomInstaller 才是 APK。
+没有。`xpad2` 是 Android ARM64 CLI；KSU/SUU Manager 和 BoomInstaller 才是 APK。
 
 ### Pad 需要联网吗？
 
-`install full` 和所有 Root/安装能力都不需要联网，因为 ELF 已内嵌锁定制品。只有选择
+`install full`、`install suu-full` 和所有 Root/安装能力都不需要联网，因为 ELF 已内嵌锁定制品。只有选择
 在线 `xpad2 update` 时 Pad 需要访问公开 GitHub Release；也可以使用上面的离线更新包。

@@ -10,7 +10,63 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const SU: &str = "/data/local/tmp/su";
-const KSU_DIAGNOSTIC: &str = "ksud-xpad2";
+
+pub struct RuntimeSpec {
+    pub id: &'static str,
+    pub display_name: &'static str,
+    pub loader_artifact: &'static str,
+    pub diagnostic_filename: &'static str,
+    pub diagnostic_fallback: &'static str,
+    pub kmi: &'static str,
+    pub version: u64,
+    pub expected_info: &'static [&'static str],
+    pub other_version_marker: &'static str,
+}
+
+pub const KSU_RUNTIME: RuntimeSpec = RuntimeSpec {
+    id: "ksu",
+    display_name: "KernelSU",
+    loader_artifact: "ksud",
+    diagnostic_filename: "ksud-xpad2",
+    diagnostic_fallback: "/data/local/tmp/ksud-xpad2",
+    kmi: "xpad2-4.19.191",
+    version: 32547,
+    expected_info: &[
+        "version: 32547",
+        "uapi_version: 2",
+        "lkm: true",
+        "late_load: true",
+        "runtime_mode: late-load",
+    ],
+    other_version_marker: "version: 40796",
+};
+
+pub const SUU_RUNTIME: RuntimeSpec = RuntimeSpec {
+    id: "suu",
+    display_name: "SukiSU Ultra",
+    loader_artifact: "suu-ksud",
+    diagnostic_filename: "ksud-sukisu-xpad2",
+    diagnostic_fallback: "/data/local/tmp/ksud-sukisu-xpad2",
+    kmi: "xpad2-sukisu-4.19.191",
+    version: 40796,
+    expected_info: &[
+        "version: 40796",
+        "flags: 0x5",
+        "features: 0x5",
+        "lkm: true",
+        "late_load: true",
+        "runtime_mode: late-load",
+    ],
+    other_version_marker: "version: 32547",
+};
+
+pub fn runtime_spec(id: &str) -> Option<&'static RuntimeSpec> {
+    match id {
+        "ksu" => Some(&KSU_RUNTIME),
+        "suu" => Some(&SUU_RUNTIME),
+        _ => None,
+    }
+}
 
 pub fn root_status() -> ComponentStatus {
     if !executable_exists(Path::new(SU)) {
@@ -47,61 +103,113 @@ pub fn root_status() -> ComponentStatus {
 }
 
 pub fn ksu_status(paths: &Paths) -> ComponentStatus {
+    runtime_status(paths, &KSU_RUNTIME)
+}
+
+pub fn suu_status(paths: &Paths) -> ComponentStatus {
+    runtime_status(paths, &SUU_RUNTIME)
+}
+
+pub fn runtime_status(paths: &Paths, spec: &RuntimeSpec) -> ComponentStatus {
     if !ksu_module_loaded() {
         return status(
-            "ksu",
+            spec.id,
             ComponentState::Absent,
             Some("not loaded in this boot"),
         );
     }
     let candidates = [
-        paths.state.join(KSU_DIAGNOSTIC),
-        PathBuf::from("/data/local/tmp/ksud-xpad2"),
+        paths.state.join(spec.diagnostic_filename),
+        PathBuf::from(spec.diagnostic_fallback),
     ];
     let Some(ksud) = candidates.iter().find(|p| executable_exists(p)) else {
+        let other = if spec.id == "ksu" {
+            &SUU_RUNTIME
+        } else {
+            &KSU_RUNTIME
+        };
+        let other_candidates = [
+            paths.state.join(other.diagnostic_filename),
+            PathBuf::from(other.diagnostic_fallback),
+        ];
+        if let Some(other_ksud) = other_candidates.iter().find(|p| executable_exists(p))
+            && let Some(other_text) = other_ksud.to_str()
+            && let Ok(output) = run(other_text, &["debug", "info"])
+        {
+            let text = output_text(&output);
+            if output.status.success()
+                && other
+                    .expected_info
+                    .iter()
+                    .all(|needle| text.lines().any(|line| line.trim() == *needle))
+            {
+                return status(
+                    spec.id,
+                    ComponentState::Ready,
+                    Some("another supported runtime is active; ordinary reboot before switching"),
+                );
+            }
+        }
         return status(
-            "ksu",
+            spec.id,
             ComponentState::Broken,
-            Some("kernel module is loaded but the locked diagnostic ksud is unavailable"),
+            Some(&format!(
+                "kernel module is loaded but the locked {} diagnostic is unavailable",
+                spec.display_name
+            )),
         );
     };
     let Some(ksud_text) = ksud.to_str() else {
-        return status("ksu", ComponentState::Broken, Some("invalid ksud path"));
+        return status(
+            spec.id,
+            ComponentState::Broken,
+            Some("invalid runtime diagnostic path"),
+        );
     };
     match run(ksud_text, &["debug", "info"]) {
         Ok(output) => {
             let text = output_text(&output);
-            let expected = [
-                "version: 32547",
-                "uapi_version: 2",
-                "lkm: true",
-                "late_load: true",
-                "runtime_mode: late-load",
-            ];
             if output.status.success()
-                && expected
+                && spec
+                    .expected_info
                     .iter()
                     .all(|needle| text.lines().any(|line| line.trim() == *needle))
             {
                 status(
-                    "ksu",
+                    spec.id,
                     ComponentState::Active,
-                    Some("version=32547 uapi=2 late-load"),
+                    Some(&format!(
+                        "{} version={} late-load",
+                        spec.display_name, spec.version
+                    )),
+                )
+            } else if text
+                .lines()
+                .any(|line| line.trim() == spec.other_version_marker)
+            {
+                status(
+                    spec.id,
+                    ComponentState::Ready,
+                    Some("another supported runtime is active; ordinary reboot before switching"),
                 )
             } else {
                 status(
-                    "ksu",
+                    spec.id,
                     ComponentState::NeedsReboot,
                     Some(&format!(
-                        "loaded KernelSU does not match the locked runtime: {text}"
+                        "loaded KernelSU-family module does not match locked {}: {text}",
+                        spec.display_name
                     )),
                 )
             }
         }
         Err(error) => status(
-            "ksu",
+            spec.id,
             ComponentState::NeedsReboot,
-            Some(&format!("cannot query loaded KernelSU: {error}")),
+            Some(&format!(
+                "cannot query loaded {} runtime: {error}",
+                spec.display_name
+            )),
         ),
     }
 }
@@ -401,7 +509,11 @@ pub fn snapshot(catalog: &Catalog, paths: &Paths) -> DeviceStatus {
     let mut components = Vec::new();
     components.push(ota::status());
     components.push(ksu_status(paths));
+    components.push(suu_status(paths));
     if let Ok(artifact) = catalog.artifact("ksu-manager") {
+        components.push(apk_status(artifact));
+    }
+    if let Ok(artifact) = catalog.artifact("suu-manager") {
         components.push(apk_status(artifact));
     }
     if let Ok(artifact) = catalog.artifact("xpad-installer") {

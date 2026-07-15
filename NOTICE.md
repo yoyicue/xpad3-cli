@@ -10,6 +10,8 @@ separate processes/files at runtime. Their exact binary and source identities ar
   its upstream LICENSE and NOTICE are included in release packages.
 - KernelSU late-load kernel module: GPL-2.0-only; `ksud-xpad2` and KernelSU Manager:
   GPL-3.0-only. Both license texts are included separately.
+- SukiSU Ultra late-load kernel module: GPL-2.0-only; `ksud-sukisu-xpad2` and the official
+  SukiSU Ultra Manager: GPL-3.0-only. Their license texts are included separately.
 - `xpad-installer`: GPL-3.0-only; its upstream LICENSE is included.
 - BoomInstaller: Apache-2.0; its LICENSE and fork attribution/modification notice are included.
 - Rust dependencies retain their own licenses. The release package contains an inventory and

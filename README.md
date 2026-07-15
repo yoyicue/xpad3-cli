@@ -14,7 +14,7 @@
 adb -s SERIAL push xpad2-vX.Y.Z-android-arm64 /data/local/tmp/xpad2
 adb -s SERIAL shell chmod 700 /data/local/tmp/xpad2
 adb -s SERIAL shell /data/local/tmp/xpad2 status
-adb -s SERIAL shell /data/local/tmp/xpad2 install full
+adb -s SERIAL shell /data/local/tmp/xpad2 install
 ```
 
 从 v0.2.0 开始，首次 `adb push` 后可以直接在 Pad 上检查和安装后续稳定版本：
@@ -24,7 +24,8 @@ adb -s SERIAL shell /data/local/tmp/xpad2 update --check
 adb -s SERIAL shell /data/local/tmp/xpad2 update
 ```
 
-`install full` 会收敛以下目标状态：
+不带组件的 `install` 默认等价于 `install full`。`full` 为兼容既有用户继续选择
+KernelSU；它会收敛以下目标状态：
 
 - `/260` 固件的系统 OTA 主包已对 user 0 冻结；
 - KernelSU 32547 / UAPI 2 以 late-load 方式在当前 boot 激活；
@@ -36,22 +37,27 @@ adb -s SERIAL shell /data/local/tmp/xpad2 update
   Root 主服务通过隔离的 UID 1000 broker 安装 APK，并在普通开机时优先恢复 Root、
   失败时回退到已配对的本地 ADB。首次升级会清除旧客户端授权并要求重新确认。
 
+SukiSU Ultra 是显式可选后端：`xpad2 install suu-full` 会用已经真机验证的 SukiSU
+Ultra 40796、官方 `com.sukisu.ultra` Manager v4.1.3 替换上述 KSU runtime/Manager
+组合，其余 installer、0044 backup 和 BoomInstaller 保持相同。`ksu` 与 `suu` 共用
+`kernelsu` 模块名，同一 boot 只能选择一个；切换必须先普通重启。
+
 再次执行同一命令是幂等的：已经通过包名、版本、证书、哈希和运行时探针验证的项目
-会跳过。普通重启后 APK 和 CLI 保留，只恢复 KSU。
+会跳过。普通重启后 APK 和 CLI 保留，只需恢复所选 runtime。
 
 ## 时间与重启预期
 
 IonStack 临时 Root 通常需要数分钟，使用历史真机数据收敛出的 3-worker capture，最多
 尝试 6 轮 holder 机会，并有 20 分钟总安全截止。6 轮均失败后，本 boot 后续成功率很低，
-`xpad2` 会退出并明确要求普通重启，不会无限重试。KernelSU 的 `late-load` 子进程会在
+`xpad2` 会退出并明确要求普通重启，不会无限重试。KSU/SUU 的 `late-load` 子进程会在
 后台完成模块注册；xpad2 会保留临时 Root 窗口并等待最多 30 秒，通过完整身份验证后才
 恢复 SELinux 和清理临时 socket/client。
 
-如果 Android 返回 `process is bad`，或者已加载的 KSU 无法通过锁定身份验证，
+如果 Android 返回 `process is bad`，或者已加载的 KSU/SUU 无法通过锁定身份验证，
 `xpad2` 同样要求普通重启。退出码 `75` 专门表示“需要普通重启”。
 
 显式 `xpad2 root` 会保留临时 Root，并打印 SELinux 状态。完成操作后必须执行
-`xpad2 cleanup` 或普通重启。`install ksu/full` 自己创建或接管的临时 Root 默认安全关闭，
+`xpad2 cleanup` 或普通重启。`install ksu/full/suu/suu-full` 自己创建或接管的临时 Root 默认安全关闭，
 并独立验证 SELinux Enforcing、socket 和 client 均已清理。
 
 所有 Root 入口都会先冻结 `/260` 正在运行的系统 OTA 主包 `com.tal.pad.ota`，确认
@@ -74,7 +80,9 @@ xpad2 update --offline DIRECTORY_OR_ZIP
 xpad2 root [-- COMMAND ARG...]
 xpad2 freeze ota
 xpad2 unfreeze ota
-xpad2 install ksu|ksu-manager|xpad-installer|installer-backup|boominstaller|full ...
+xpad2 install                              # 默认 full / KernelSU
+xpad2 install ksu|suu|ksu-manager|suu-manager|xpad-installer|installer-backup|boominstaller ...
+xpad2 install full|suu-full
 xpad2 install cli FILE [--name NAME]
 xpad2 install apk FILE
 xpad2 verify [COMPONENT]
@@ -84,7 +92,7 @@ xpad2 logs export DIRECTORY
 xpad2 cache path|list|verify|import DIRECTORY|prune|clear
 ```
 
-安装普通 APK 不会把临时 Root、simpleperf 授权或 KernelSU Manager 是否存在作为
+安装普通 APK 不会把临时 Root、simpleperf 授权或 KSU/SUU Manager 是否存在作为
 预检查条件。APK 会先解析并验证真实 manifest、ABI、v2/v3 签名和内容摘要；签名冲突
 时不会自动卸载应用或清除用户数据。首次安装和同包升级都使用 auto：先在持久 0044
 身份中尝试 OEM Provider，未提交时再尝试当前身份的 direct；0044 整体失败后才会降级，
@@ -151,12 +159,12 @@ adb shell /data/local/tmp/xpad2 logs export /sdcard/Download
 ```
 
 输出文件名为 `xpad2log-YYYYMMDD-HHMMSS.zip`，包含当前及历史事务、当前/上一 boot
-可获得的 logcat、KSU、PackageManager、清理结果和 lock 身份。导出时会过滤设备序列号、
+可获得的 logcat、KSU/SUU、PackageManager、清理结果和 lock 身份。导出时会过滤设备序列号、
 ADB key、配对凭据、token、密码和私钥相关行。
 
 ## 构建
 
-主控制面使用 Rust；IonStack、ksud、xpad-install 和 APK 仍作为独立、哈希锁定制品。
+主控制面使用 Rust；IonStack、两套锁定 ksud、xpad-install 和 APK 仍作为独立、哈希锁定制品。
 需要 Rust、`cargo-ndk`、Android NDK r29、`jq`、`zip` 和 OpenSSL：
 
 ```sh
@@ -194,4 +202,5 @@ alps/vnd_ls12_mt8797_wifi_64/ls12_mt8797_wifi_64:13/TP1A.220624.014/260:user/rel
 ```
 
 临时 Root 链可能导致设备重启或 kernel panic。仅应在你拥有或明确获授权、且有恢复路径
-的设备上使用。`xpad2` 不修改 AVB、boot image 或 system 分区，也不在线卸载/替换 KSU。
+的设备上使用。`xpad2` 不修改 AVB、boot image 或 system 分区，也不在线卸载、替换或
+切换 KSU/SUU。

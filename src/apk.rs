@@ -176,6 +176,12 @@ mod tests {
                 "c371061b19d8c7d7d6133c6a9bafe198fa944e50c1b31c9d8daa8d7f1fc2d2d6",
             ),
             (
+                "suu-manager",
+                "com.sukisu.ultra",
+                40796,
+                "947ae944f3de4ed4c21a7e4f7953ecf351bfa2b36239da37a34111ad29993eef",
+            ),
+            (
                 "boominstaller",
                 "com.yoyicue.boominstaller",
                 11,

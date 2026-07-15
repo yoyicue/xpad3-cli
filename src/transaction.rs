@@ -17,6 +17,22 @@ const FULL: &[&str] = &[
     "ksu-manager",
     "boominstaller",
 ];
+const SUU_FULL: &[&str] = &[
+    "suu",
+    "xpad-installer",
+    "installer-backup",
+    "suu-manager",
+    "boominstaller",
+];
+const COMPONENT_ORDER: &[&str] = &[
+    "ksu",
+    "suu",
+    "xpad-installer",
+    "installer-backup",
+    "ksu-manager",
+    "suu-manager",
+    "boominstaller",
+];
 
 pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]) -> Result<()> {
     let components = normalize(requested)?;
@@ -36,12 +52,30 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
 
     let mut result = (|| {
         device::profile_check(catalog)?;
-        if components.iter().any(|id| id == "ksu") {
+        let runtime_id = components
+            .iter()
+            .find(|id| id.as_str() == "ksu" || id.as_str() == "suu")
+            .map(String::as_str);
+        let early_manager = match runtime_id {
+            Some("ksu") if components.iter().any(|id| id == "ksu-manager") => Some("ksu-manager"),
+            Some("suu") if components.iter().any(|id| id == "suu-manager") => Some("suu-manager"),
+            _ => None,
+        };
+
+        if let Some(runtime_id) = runtime_id {
             let ota_status = ota::freeze(&mut log)?;
             println!(
                 "✓ ota: {}",
                 ota_status.detail.as_deref().unwrap_or("frozen")
             );
+            // Install the matching Manager after the mandatory OTA gate but
+            // before late-load. SukiSU validates and pins the official Manager
+            // identity while the module is registering; doing this first also
+            // removes a first-install race for KernelSU.
+            if let Some(manager) = early_manager {
+                package_manager_changed |=
+                    install::install_locked_apk(catalog, paths, manager, &mut log)?;
+            }
             if device::ksu_module_loaded() {
                 root_session = Some(RootSession {
                     owned: false,
@@ -50,9 +84,10 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
             } else {
                 root_session = Some(RootSession::acquire(catalog, paths, &mut log, false)?);
             }
-            install::ensure_ksu(
+            install::ensure_runtime(
                 catalog,
                 paths,
+                runtime_id,
                 root_session.as_ref().expect("root session initialized"),
                 &mut log,
             )?;
@@ -63,9 +98,11 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
         {
             install::install_locked_cli(catalog, paths, "xpad-installer", &mut log)?;
         }
-        if components.iter().any(|id| id == "ksu-manager") {
-            package_manager_changed |=
-                install::install_locked_apk(catalog, paths, "ksu-manager", &mut log)?;
+        for manager in ["ksu-manager", "suu-manager"] {
+            if components.iter().any(|id| id == manager) && early_manager != Some(manager) {
+                package_manager_changed |=
+                    install::install_locked_apk(catalog, paths, manager, &mut log)?;
+            }
         }
         if components.iter().any(|id| id == "boominstaller") {
             package_manager_changed |=
@@ -95,7 +132,11 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
     if result.is_ok() {
         if boot_id() != started_boot {
             result = Err(needs_reboot("Boot ID changed before final verification"));
-        } else if components.iter().any(|id| id == "ksu") {
+        } else if let Some(runtime_id) = components
+            .iter()
+            .find(|id| id.as_str() == "ksu" || id.as_str() == "suu")
+            .map(String::as_str)
+        {
             let ota_status = ota::status();
             if ota_status.state != ComponentState::Active {
                 result = Err(msg(format!(
@@ -103,11 +144,13 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
                     ota_status.detail.unwrap_or_default()
                 )));
             }
-            let ksu_status = device::ksu_status(paths);
-            if result.is_ok() && ksu_status.state != ComponentState::Active {
+            let runtime_status = device::runtime_spec(runtime_id)
+                .map(|spec| device::runtime_status(paths, spec))
+                .expect("normalized runtime");
+            if result.is_ok() && runtime_status.state != ComponentState::Active {
                 result = Err(needs_reboot(format!(
-                    "final KernelSU verification failed: {}",
-                    ksu_status.detail.unwrap_or_default()
+                    "final {runtime_id} verification failed: {}",
+                    runtime_status.detail.unwrap_or_default()
                 )));
             }
         }
@@ -140,13 +183,15 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
             )));
         }
     }
-    if result.is_ok() && components.iter().any(|id| id == "ksu-manager") {
-        let state = device::apk_status(catalog.artifact("ksu-manager")?);
-        if state.state != ComponentState::Installed {
-            result = Err(msg(format!(
-                "final KSU Manager verification failed: {}",
-                state.detail.unwrap_or_default()
-            )));
+    for manager in ["ksu-manager", "suu-manager"] {
+        if result.is_ok() && components.iter().any(|id| id == manager) {
+            let state = device::apk_status(catalog.artifact(manager)?);
+            if state.state != ComponentState::Installed {
+                result = Err(msg(format!(
+                    "final {manager} verification failed: {}",
+                    state.detail.unwrap_or_default()
+                )));
+            }
         }
     }
     if result.is_ok() && components.iter().any(|id| id == "boominstaller") {
@@ -201,21 +246,30 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
 }
 
 fn normalize(requested: &[String]) -> Result<Vec<String>> {
-    if requested.is_empty() {
-        return Err(msg("install requires at least one component"));
-    }
     let mut selected = BTreeSet::new();
-    for id in requested {
+    let default = ["full".to_string()];
+    for id in if requested.is_empty() {
+        &default[..]
+    } else {
+        requested
+    } {
         if id == "full" {
             selected.extend(FULL.iter().map(|id| id.to_string()));
-        } else if FULL.contains(&id.as_str()) {
+        } else if id == "suu-full" {
+            selected.extend(SUU_FULL.iter().map(|id| id.to_string()));
+        } else if COMPONENT_ORDER.contains(&id.as_str()) {
             selected.insert(id.clone());
         } else {
             return Err(msg(format!("unknown built-in component: {id}")));
         }
     }
+    if selected.contains("ksu") && selected.contains("suu") {
+        return Err(msg(
+            "ksu and suu are mutually exclusive in one boot; choose full or suu-full",
+        ));
+    }
     let mut ordered = Vec::new();
-    for id in FULL {
+    for id in COMPONENT_ORDER {
         if selected.remove(*id) {
             ordered.push((*id).to_string());
         }
@@ -248,5 +302,25 @@ mod tests {
             normalize(&["installer-backup".to_string()]).expect("normalize backup"),
             vec!["installer-backup"]
         );
+    }
+
+    #[test]
+    fn empty_selection_defaults_to_full() {
+        assert_eq!(normalize(&[]).expect("default full"), FULL);
+    }
+
+    #[test]
+    fn suu_full_selects_only_the_sukisu_runtime_and_manager() {
+        assert_eq!(
+            normalize(&["suu-full".to_string()]).expect("suu full"),
+            SUU_FULL
+        );
+    }
+
+    #[test]
+    fn runtimes_cannot_be_mixed_in_one_boot() {
+        let error =
+            normalize(&["ksu".to_string(), "suu".to_string()]).expect_err("runtime mix must fail");
+        assert!(error.to_string().contains("mutually exclusive"));
     }
 }
