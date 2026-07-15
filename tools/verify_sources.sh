@@ -19,6 +19,12 @@ jq -e '
     (.repository | test("^https://github\\.com/[^/]+/[^/]+$")) and
     (.tag | type == "string" and length > 0) and
     (.commit | test("^[0-9a-f]{40}$")) and
+    ((.tag_commit // .commit) | test("^[0-9a-f]{40}$")) and
+    (if .commit != (.tag_commit // .commit)
+      then (.workflow_run | type == "number" and . > 0) and
+        (.workflow_artifact | type == "string" and length > 0)
+      else true
+    end) and
     (.license | type == "string" and length > 0)
   )
 ' "$LOCK" >/dev/null || {
@@ -27,7 +33,8 @@ jq -e '
 }
 
 verified=0
-while IFS=$'\t' read -r repository tag expected; do
+while IFS=$'\t' read -r repository tag expected tag_expected workflow_run \
+  workflow_artifact; do
   slug=${repository#https://github.com/}
   canonical=$(curl --fail --silent --show-error --location \
     -H 'Accept: application/vnd.github+json' \
@@ -50,15 +57,45 @@ while IFS=$'\t' read -r repository tag expected; do
     printf 'source tag not found: %s %s\n' "$repository" "$tag" >&2
     exit 1
   }
-  [[ "$resolved" == "$expected" ]] || {
+  [[ "$resolved" == "$tag_expected" ]] || {
     printf 'source identity mismatch: %s %s expected=%s actual=%s\n' \
-      "$repository" "$tag" "$expected" "$resolved" >&2
+      "$repository" "$tag" "$tag_expected" "$resolved" >&2
     exit 1
   }
 
-  printf 'SOURCE_OK repository=%s tag=%s commit=%s\n' \
-    "$repository" "$tag" "$resolved"
+  if [[ "$expected" != "$tag_expected" ]]; then
+    run=$(curl --fail --silent --show-error --location \
+      -H 'Accept: application/vnd.github+json' \
+      "https://api.github.com/repos/$slug/actions/runs/$workflow_run")
+    jq -e --arg commit "$expected" '
+      .head_sha == $commit and
+      .event == "push" and
+      .status == "completed" and
+      .conclusion == "success"
+    ' <<<"$run" >/dev/null || {
+      printf 'workflow provenance mismatch: %s run=%s expected_commit=%s\n' \
+        "$repository" "$workflow_run" "$expected" >&2
+      exit 1
+    }
+    artifacts_url=$(jq -r '.artifacts_url' <<<"$run")
+    artifacts=$(curl --fail --silent --show-error --location \
+      -H 'Accept: application/vnd.github+json' "$artifacts_url")
+    jq -e --arg artifact "$workflow_artifact" '
+      any(.artifacts[]; .name == $artifact)
+    ' <<<"$artifacts" >/dev/null || {
+      printf 'workflow artifact missing: %s run=%s artifact=%s\n' \
+        "$repository" "$workflow_run" "$workflow_artifact" >&2
+      exit 1
+    }
+  fi
+
+  printf 'SOURCE_OK repository=%s tag=%s tag_commit=%s build_commit=%s workflow_run=%s artifact=%s\n' \
+    "$repository" "$tag" "$resolved" "$expected" "${workflow_run:-none}" \
+    "${workflow_artifact:-none}"
   verified=$((verified + 1))
-done < <(jq -r '.sources[] | [.repository, .tag, .commit] | @tsv' "$LOCK" | sort -u)
+done < <(jq -r '.sources[] |
+  [.repository, .tag, .commit, (.tag_commit // .commit),
+    (.workflow_run // ""), (.workflow_artifact // "")] |
+  @tsv' "$LOCK" | sort -u)
 
 printf 'XPAD2_SOURCES_VERIFY_OK entries=%s\n' "$verified"

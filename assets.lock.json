@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "product_version": "0.1.2",
-  "catalog_version": "2026-07-15.4",
+  "product_version": "0.1.3",
+  "catalog_version": "2026-07-15.5",
   "profile": {
     "build_fingerprint": "alps/vnd_ls12_mt8797_wifi_64/ls12_mt8797_wifi_64:13/TP1A.220624.014/260:user/release-keys",
     "kernel_release_prefix": "4.19.191",
@@ -94,16 +94,16 @@
     },
     {
       "id": "ksu-manager",
-      "filename": "kernelsu_manager_v3_2_4_32457.apk",
+      "filename": "kernelsu_manager_v3_2_5_22_gccfee6dc_32547.apk",
       "kind": "apk",
-      "version": "3.2.4",
-      "size": 8776001,
-      "sha256": "f0951351291494e0c309267b375cf5bfbdb5eca6df0ec18f6fb7df8b3dea990b",
+      "version": "3.2.5-22-gccfee6dc",
+      "size": 9050897,
+      "sha256": "bd2b5d6671ed3636d1b3ac40c0f2e7dc0eb23319298fefc59d88b382e2800d7e",
       "embedded": true,
       "mode": 384,
       "target": null,
       "package": "me.weishu.kernelsu",
-      "version_code": 32457,
+      "version_code": 32547,
       "cert_sha256": "c371061b19d8c7d7d6133c6a9bafe198fa944e50c1b31c9d8daa8d7f1fc2d2d6"
     },
     {

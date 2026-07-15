@@ -33,7 +33,7 @@ source_for() {
     ionstack-preload) printf '%s\n' "$PARENT/xpad2-ionstack-poc/build/ionstack_preload.so" ;;
     ionstack-chainwalk-probe) printf '%s\n' "$PARENT/xpad2-ionstack-poc/build/cve_2026_43499_chainwalk_probe_arm32" ;;
     ksud) printf '%s\n' "$PARENT/xpad2-ksu-lateload/artifacts/ksud-xpad2" ;;
-    ksu-manager) printf '%s\n' "$PARENT/xpad2-reroot-android/app/src/main/res/raw/kernelsu_manager_v3_2_4_32457.apk" ;;
+    ksu-manager) printf '%s\n' "$PARENT/xpad2-reroot-android/app/src/main/res/raw/kernelsu_manager_v3_2_5_22_gccfee6dc_32547.apk" ;;
     xpad-installer) printf '%s\n' "$PARENT/xpad-installer/dist/xpad-install" ;;
     boominstaller) printf '%s\n' "$PARENT/BoomInstaller/out/apk/BoomInstaller-v13.6.0.r9.2f1ac6f-production.apk" ;;
     *) return 1 ;;
@@ -44,6 +44,9 @@ command -v jq >/dev/null || {
   printf 'jq is required\n' >&2
   exit 1
 }
+MANAGER_FILENAME=$(jq -r '.artifacts[] | select(.id == "ksu-manager") | .filename' \
+  "$ROOT/assets.lock.json")
+MANAGER_SOURCE=$(source_for ksu-manager "$MANAGER_FILENAME")
 "$ROOT/tools/build_android.sh"
 
 rm -rf "$STAGE"
@@ -100,9 +103,12 @@ done < <(jq -r '.artifacts[] | select(.embedded == true) | [.id,.filename,.sha25
 
 rm -f "$DIST/xpad2-v$VERSION-android-arm64" \
   "$DIST/xpad2-v$VERSION-android-arm64.zip" \
-  "$DIST/xpad2-cache-v$VERSION.zip" "$DIST/SHA256SUMS"
+  "$DIST/xpad2-cache-v$VERSION.zip" "$DIST/$MANAGER_FILENAME" \
+  "$DIST/SHA256SUMS"
 cp "$BINARY" "$DIST/xpad2-v$VERSION-android-arm64"
 chmod 755 "$DIST/xpad2-v$VERSION-android-arm64"
+cp "$MANAGER_SOURCE" "$DIST/$MANAGER_FILENAME"
+chmod 644 "$DIST/$MANAGER_FILENAME"
 (
   cd "$STAGE"
   zip -X -q -r "$DIST/xpad2-v$VERSION-android-arm64.zip" "xpad2-v$VERSION-android-arm64"
@@ -115,6 +121,7 @@ cp "$ROOT/assets.lock.json" "$ROOT/sources.lock.json" "$DIST/"
     "xpad2-v$VERSION-android-arm64" \
     "xpad2-v$VERSION-android-arm64.zip" \
     "xpad2-cache-v$VERSION.zip" \
+    "$MANAGER_FILENAME" \
     assets.lock.json sources.lock.json > SHA256SUMS
 )
 rm -rf "$STAGE"

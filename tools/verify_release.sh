@@ -11,6 +11,21 @@ trap 'rm -rf "$tmp_dir"' EXIT
   cd "$DIST"
   shasum -a 256 -c SHA256SUMS
 )
+manager_filename=$(jq -r '.artifacts[] | select(.id == "ksu-manager") | .filename' \
+  "$ROOT/assets.lock.json")
+manager_sha=$(jq -r '.artifacts[] | select(.id == "ksu-manager") | .sha256' \
+  "$ROOT/assets.lock.json")
+manager_size=$(jq -r '.artifacts[] | select(.id == "ksu-manager") | .size' \
+  "$ROOT/assets.lock.json")
+[[ "$(shasum -a 256 "$DIST/$manager_filename" | awk '{print $1}')" == \
+  "$manager_sha" ]] || {
+  printf 'standalone Manager SHA-256 mismatch\n' >&2
+  exit 1
+}
+[[ "$(wc -c < "$DIST/$manager_filename" | tr -d ' ')" == "$manager_size" ]] || {
+  printf 'standalone Manager size mismatch\n' >&2
+  exit 1
+}
 unzip -q "$DIST/xpad2-cache-v$VERSION.zip" -d "$tmp_dir"
 unzip -q "$DIST/xpad2-v$VERSION-android-arm64.zip" -d "$tmp_dir"
 openssl dgst -sha256 -verify "$ROOT/keys/catalog-release-public.pem" \

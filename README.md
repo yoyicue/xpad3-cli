@@ -20,7 +20,7 @@ adb -s SERIAL shell /data/local/tmp/xpad2 install full
 
 - `/260` 固件的系统 OTA 主包已对 user 0 冻结；
 - KernelSU 32547 / UAPI 2 以 late-load 方式在当前 boot 激活；
-- KernelSU Manager v3.2.4（versionCode 32457）；
+- KernelSU Manager v3.2.5-22-gccfee6dc（versionCode 32547）；
 - `/data/local/tmp/xpad-install` v0.1.1 锁定构建；
 - BoomInstaller v13.6.0.r9.2f1ac6f、system 服务与普通开机自启动。
 

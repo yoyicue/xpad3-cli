@@ -37,7 +37,7 @@ fn candidate_paths(manifest: &Path, artifact_dir: Option<&Path>, a: &Artifact) -
         "ksud" => Some(parent.join("xpad2-ksu-lateload/artifacts/ksud-xpad2")),
         "ksu-manager" => {
             Some(parent.join(
-                "xpad2-reroot-android/app/src/main/res/raw/kernelsu_manager_v3_2_4_32457.apk",
+                "xpad2-reroot-android/app/src/main/res/raw/kernelsu_manager_v3_2_5_22_gccfee6dc_32547.apk",
             ))
         }
         "xpad-installer" => Some(parent.join("xpad-installer/dist/xpad-install")),

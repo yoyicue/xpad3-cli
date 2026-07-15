@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "product_version": "0.1.2",
+  "product_version": "0.1.3",
   "sources": [
     {
       "component": "ionstack",
@@ -35,10 +35,13 @@
     {
       "component": "kernelsu-manager",
       "repository": "https://github.com/tiann/KernelSU",
-      "version": "v3.2.4",
-      "commit": "0e4dafcadd4f0fec5577be599880644781280321",
-      "tag": "v3.2.4",
-      "version_code": 32457,
+      "version": "v3.2.5-22-gccfee6dc",
+      "commit": "ccfee6dc67d79a1404eb71c67b67b4f6c7b65a4a",
+      "tag": "v3.2.5",
+      "tag_commit": "b0bc817b4e966aa6aa830834eaf6ef765d821d40",
+      "workflow_run": 29148371657,
+      "workflow_artifact": "manager",
+      "version_code": 32547,
       "license": "GPL-3.0-only"
     },
     {

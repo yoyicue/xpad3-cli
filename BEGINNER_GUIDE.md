@@ -49,30 +49,30 @@ adb -s 你的设备序列号
 ## 3. 下载并校验 xpad2
 
 当前正式版本是
-[`v0.1.2`](https://github.com/yoyicue/xpad2-cli/releases/tag/v0.1.2)。只需要下载：
+[`v0.1.3`](https://github.com/yoyicue/xpad2-cli/releases/tag/v0.1.3)。只需要下载：
 
 ```text
-xpad2-v0.1.2-android-arm64
+xpad2-v0.1.3-android-arm64
 ```
 
 macOS 或 Linux 可以直接执行：
 
 ```sh
-curl -fLO https://github.com/yoyicue/xpad2-cli/releases/download/v0.1.2/xpad2-v0.1.2-android-arm64
-shasum -a 256 xpad2-v0.1.2-android-arm64
+curl -fLO https://github.com/yoyicue/xpad2-cli/releases/download/v0.1.3/xpad2-v0.1.3-android-arm64
+shasum -a 256 xpad2-v0.1.3-android-arm64
 ```
 
 Windows PowerShell 可以执行：
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/yoyicue/xpad2-cli/releases/download/v0.1.2/xpad2-v0.1.2-android-arm64" -OutFile "xpad2-v0.1.2-android-arm64"
-Get-FileHash .\xpad2-v0.1.2-android-arm64 -Algorithm SHA256
+Invoke-WebRequest -Uri "https://github.com/yoyicue/xpad2-cli/releases/download/v0.1.3/xpad2-v0.1.3-android-arm64" -OutFile "xpad2-v0.1.3-android-arm64"
+Get-FileHash .\xpad2-v0.1.3-android-arm64 -Algorithm SHA256
 ```
 
 正确的 SHA-256 是：
 
 ```text
-9080a90a504ea66f57c3060902c07eb013774e1bc31a4cb7202215eb01018ff9
+d0c71721e0eee9148983d65148548e2ce3f46282b8158eb5b802c15f01c7a39f
 ```
 
 哈希不一致时不要继续，重新下载文件。
@@ -82,7 +82,7 @@ Get-FileHash .\xpad2-v0.1.2-android-arm64 -Algorithm SHA256
 在下载文件所在目录执行：
 
 ```sh
-adb push xpad2-v0.1.2-android-arm64 /data/local/tmp/xpad2
+adb push xpad2-v0.1.3-android-arm64 /data/local/tmp/xpad2
 adb shell chmod 700 /data/local/tmp/xpad2
 adb shell /data/local/tmp/xpad2 version
 ```
@@ -90,7 +90,7 @@ adb shell /data/local/tmp/xpad2 version
 最后一条命令应显示：
 
 ```text
-xpad2 0.1.2 (catalog 2026-07-15.4)
+xpad2 0.1.3 (catalog 2026-07-15.5)
 ```
 
 这就表示 `xpad2` 已经安装到了：

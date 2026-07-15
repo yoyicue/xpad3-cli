@@ -172,7 +172,7 @@ mod tests {
             (
                 "ksu-manager",
                 "me.weishu.kernelsu",
-                32457,
+                32547,
                 "c371061b19d8c7d7d6133c6a9bafe198fa944e50c1b31c9d8daa8d7f1fc2d2d6",
             ),
             (
