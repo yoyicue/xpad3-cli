@@ -1,6 +1,6 @@
 # XPad2 CLI 设计
 
-状态：v0.4.12 已实现；v0.1.1 完成 BoomInstaller 依赖身份和公开分发材料，v0.1.2
+状态：v0.4.13 已实现；v0.1.1 完成 BoomInstaller 依赖身份和公开分发材料，v0.1.2
 增加可验证的 OTA 冻结策略与 Root 前强制门禁，v0.1.3 对齐 KernelSU 驱动与
 官方生产签名 Manager 的 32547 构建号，v0.1.4 升级 late-load v0.2.1，恢复
 `u:r:ksu:s0` Manager Root 且保持全局 SELinux Enforcing；v0.1.5 将 BoomInstaller
@@ -38,6 +38,7 @@ v0.4.11 锁定 BoomInstaller r17，修正内嵌 v0.2.6 ELF 的运行时大小门
 纳入发布边界检查，防止 lock、APK asset 与 Java 校验常量再次漂移。
 v0.4.12 锁定 xpad-install v0.2.7 与 BoomInstaller r18，将已提交但仍未收敛的修复
 识别为 exit 76 pending，并只允许通过 `xpad2 status` 做只读复检。
+v0.4.13 将底层轮询严格调整为每 5 秒一次，并锁定 xpad-install v0.2.8 与 BoomInstaller r19。
 
 验收覆盖单 ELF、只读状态探针、3-worker IonStack 临时 Root、KSU/SUU late-load、
 CLI/APK 身份验证、临时 Root 安全收口、同 boot 幂等重跑、普通重启后恢复、RSA 签名
@@ -509,9 +510,9 @@ xpad2-cache/
 ```json
 {
   "id": "xpad-installer",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "kind": "cli",
-  "sha256": "ae3937467217c1a02b166ebe92f20fb57a00a9739db56a8479d09ad913a73b2a",
+  "sha256": "72edffd5b6f0b2b9fc111fbac4d6f19ce2a16e755b205eb1cebaf38c59d0d7aa",
   "size": 89584,
   "target": "/data/local/tmp/xpad-install"
 }
@@ -692,8 +693,8 @@ xpad2log-YYYYMMDD-HHMMSS.zip
 | SukiSU Ultra module | XPad2 Linux 4.19 v0.1.0 / 40796 | `5835dbed566e9711fab02c3b729e6dce495b996481af53c474f2be4816e7fd81` |
 | `ksud-sukisu-xpad2` | SukiSU Ultra v4.1.3 / 40796 | `74379a3c1a556448762db00d8e1316b31a4cf56a1eb1b8accd8447a1e3859bd8` |
 | SukiSU Ultra Manager | v4.1.3 / 40796 | `1b1e837c0a5b6aa34554882fad67cef6db6ca1a84d43e07dd904cf54f8d261ae` |
-| `xpad-install` | v0.2.7 | `ae3937467217c1a02b166ebe92f20fb57a00a9739db56a8479d09ad913a73b2a` |
-| BoomInstaller | v13.6.0.r18.757df9e production | `0f19284369e9cfd66e0a71cbc3e1c5f7d52b5fba4ff0f3e96b9d98d1c91478e6` |
+| `xpad-install` | v0.2.8 | `72edffd5b6f0b2b9fc111fbac4d6f19ce2a16e755b205eb1cebaf38c59d0d7aa` |
+| BoomInstaller | v13.6.0.r19.08077a0 production | `185bb9a91833f63f5b47275572a1b5f5ad1f9d3dddfdd61a6cf1d7a7bd805280` |
 
 版本号相等不是 runtime/Manager 兼容性的判据；两套组合分别由 catalog 显式锁定。
 
@@ -726,7 +727,7 @@ licenses/
 完全一致，不能成为第二条版本线。固定名 update manifest 和 delta index 供 Latest Release
 发现；delta 只优化传输，不是独立版本线或信任根。
 
-## 14. v0.4.12 验收标准
+## 14. v0.4.13 验收标准
 
 1. 单个 `xpad2` ELF 可以被推送到 `/data/local/tmp` 并正常执行。
 2. `status` 和 `doctor` 不进行 Root 或持久修改。
