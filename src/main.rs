@@ -66,6 +66,7 @@ fn run_main() -> Result<()> {
         "cache" => command_cache(&catalog, &paths, &args[1..])?,
         "update" => command_update(&catalog, &paths, &args[1..])?,
         "_update-verify-candidate" => update::verify_candidate_command(&catalog, &args[1..])?,
+        "_update-export-cache" => update::export_candidate_cache_command(&catalog, &args[1..])?,
         other => return Err(msg(format!("unknown command: {other}; run `xpad2 help`"))),
     }
     Ok(())
@@ -546,7 +547,9 @@ fn command_cache(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()
             simple_transaction(paths, "cache prune", |log| {
                 let count = catalog::prune_cache(paths, catalog)?;
                 log.event("cache", "pruned", json!({"removed": count}))?;
-                println!("removed {count} unlocked blobs");
+                println!(
+                    "removed {count} obsolete cache files; kept current and one rollback release"
+                );
                 Ok(vec![])
             })?;
         }

@@ -19,7 +19,7 @@ use std::io::{Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use zip::ZipArchive;
 
 const UPDATE_SCHEMA: u32 = 1;
@@ -29,6 +29,7 @@ const UPDATE_REPOSITORY: &str = "https://github.com/yoyicue/xpad2-cli";
 const GITHUB_API_REPOSITORY: &str = "https://api.github.com/repos/yoyicue/xpad2-cli";
 const MANIFEST_FILENAME: &str = "xpad2-update.json";
 const SIGNATURE_FILENAME: &str = "xpad2-update.json.sig";
+const CATALOG_SIGNATURE_FILENAME: &str = "catalog.sig";
 const MAX_MANIFEST_SIZE: usize = 256 * 1024;
 const MAX_SIGNATURE_SIZE: usize = 64 * 1024;
 const MAX_RELEASE_METADATA_SIZE: usize = 2 * 1024 * 1024;
@@ -37,6 +38,26 @@ const MAX_CACHE_ARCHIVE_SIZE: u64 = 512 * 1024 * 1024;
 const MAX_EXTRACTED_SIZE: u64 = 768 * 1024 * 1024;
 const MAX_ZIP_ENTRIES: usize = 4096;
 const DOWNLOAD_ATTEMPTS: u32 = 3;
+const MAX_AUTOMATIC_RETRY_DELAY: Duration = Duration::from_secs(60);
+
+#[derive(Debug)]
+enum HttpFailure {
+    Fatal(String),
+    Retryable {
+        message: String,
+        retry_after: Option<Duration>,
+    },
+}
+
+impl HttpFailure {
+    fn message(&self) -> &str {
+        match self {
+            Self::Fatal(message) | Self::Retryable { message, .. } => message,
+        }
+    }
+}
+
+type HttpResult<T> = std::result::Result<T, HttpFailure>;
 
 #[derive(Clone, Debug)]
 pub struct UpdateRequest {
@@ -355,7 +376,7 @@ pub fn apply(
         }),
     )?;
     println!(
-        "准备更新 xpad2 {} -> {}；下载、双重签名校验和候选自检通常需要 1–3 分钟…",
+        "准备更新 xpad2 {} -> {}；下载、签名校验、内嵌缓存导出和候选自检通常需要 1–3 分钟…",
         current, target
     );
 
@@ -373,31 +394,49 @@ pub fn apply(
         "xpad2 ELF",
     )?;
     validate_elf_arm64(&candidate)?;
-    let cache_archive = acquire_asset(
-        &verified.manifest.cache,
-        verified.offline_root.as_deref(),
-        verified.github_release.as_ref(),
-        &workspace.path,
-        0o600,
-        "离线 cache",
-    )?;
-    let unpacked = workspace.path.join("cache-unpacked");
-    extract_zip_safely(&cache_archive, &unpacked, MAX_EXTRACTED_SIZE)?;
-    let cache_source = locate_named_root(&unpacked, "xpad2-cache")?;
-    let target_lock = verify_cache_against_manifest(&cache_source, &verified.manifest)?;
-    verify_candidate(
-        &candidate,
-        &manifest_path,
-        &signature_path,
-        &cache_source,
-        log,
-    )?;
+    let catalog_signature = acquire_catalog_signature(&verified, &workspace.path)?;
+    let (cache_source, target_lock, cache_mode) = if let Some(catalog_signature) = catalog_signature
+    {
+        let exported = workspace.path.join("embedded-cache");
+        export_candidate_cache(
+            &candidate,
+            &manifest_path,
+            &signature_path,
+            &catalog_signature,
+            &exported,
+            log,
+        )?;
+        let lock = load_cache_catalog_against_manifest(&exported, &verified.manifest)?;
+        (exported, lock, "candidate-export")
+    } else {
+        eprintln!("提示：所选旧发布没有独立 catalog.sig，兼容模式将下载完整离线 cache。");
+        let cache_archive = acquire_asset(
+            &verified.manifest.cache,
+            verified.offline_root.as_deref(),
+            verified.github_release.as_ref(),
+            &workspace.path,
+            0o600,
+            "离线 cache",
+        )?;
+        let unpacked = workspace.path.join("cache-unpacked");
+        extract_zip_safely(&cache_archive, &unpacked, MAX_EXTRACTED_SIZE)?;
+        let cache_source = locate_named_root(&unpacked, "xpad2-cache")?;
+        let target_lock = verify_cache_against_manifest(&cache_source, &verified.manifest, None)?;
+        verify_candidate(
+            &candidate,
+            &manifest_path,
+            &signature_path,
+            &cache_source,
+            log,
+        )?;
+        (cache_source, target_lock, "legacy-cache-download")
+    };
 
     let target_cache = paths.managed_cache_path(
         &verified.manifest.version,
         &verified.manifest.catalog_version,
     )?;
-    let cache_swap = install_version_cache(&cache_source, &target_lock, &target_cache)?;
+    let cache_swap = install_version_cache(&cache_source, &target_lock, &target_cache, paths)?;
     let binary_swap = match install_candidate_binary(&candidate, &current, paths) {
         Ok(swap) => swap,
         Err(error) => {
@@ -434,13 +473,30 @@ pub fn apply(
     }
 
     cache_swap.commit()?;
-    prune_binary_backups(paths, 3)?;
+    let cache_files_removed = match catalog::retain_managed_cache_releases(
+        paths,
+        &[target_cache.clone(), paths.cache.clone()],
+    ) {
+        Ok(removed) => removed,
+        Err(error) => {
+            log.event(
+                "cache",
+                "maintenance-warning",
+                json!({"error": error.to_string()}),
+            )?;
+            eprintln!("提示：更新已安装，但历史缓存回收失败：{error}");
+            0
+        }
+    };
+    prune_binary_backups(paths, 1)?;
     let record = json!({
         "from_version": current.to_string(),
         "to_version": target.to_string(),
         "catalog_version": verified.manifest.catalog_version,
         "binary_sha256": verified.manifest.binary.sha256,
         "cache_sha256": verified.manifest.cache.sha256,
+        "cache_mode": cache_mode,
+        "cache_files_removed": cache_files_removed,
         "manifest_sha256": sha256_bytes(&verified.raw),
         "source": verified.source,
         "rollback_binary": binary_swap.backup,
@@ -458,13 +514,11 @@ pub fn apply(
     Ok(true)
 }
 
-pub fn verify_candidate_command(catalog: &Catalog, args: &[String]) -> Result<()> {
-    if args.len() != 3 {
-        return Err(msg("internal candidate verification usage error"));
-    }
-    let manifest_path = Path::new(&args[0]);
-    let signature_path = Path::new(&args[1]);
-    let cache = Path::new(&args[2]);
+fn verify_candidate_identity(
+    catalog: &Catalog,
+    manifest_path: &Path,
+    signature_path: &Path,
+) -> Result<UpdateManifest> {
     let raw = read_limited(manifest_path, MAX_MANIFEST_SIZE)?;
     let signature = read_limited(signature_path, MAX_SIGNATURE_SIZE)?;
     catalog::verify_catalog_signature(&raw, &signature)?;
@@ -485,13 +539,50 @@ pub fn verify_candidate_command(catalog: &Catalog, args: &[String]) -> Result<()
         .map_err(|error| msg(format!("cannot resolve candidate executable: {error}")))?;
     verify_file_identity(&current_exe, &manifest.binary, "candidate ELF")?;
     validate_elf_arm64(&current_exe)?;
-    verify_cache_against_manifest(cache, &manifest)?;
-    let verified = catalog::verify_complete_external_cache(cache, catalog)?;
+    Ok(manifest)
+}
+
+pub fn verify_candidate_command(catalog: &Catalog, args: &[String]) -> Result<()> {
+    if args.len() != 3 {
+        return Err(msg("internal candidate verification usage error"));
+    }
+    let manifest = verify_candidate_identity(catalog, Path::new(&args[0]), Path::new(&args[1]))?;
+    let cache = Path::new(&args[2]);
+    let managed_paths = Paths::new(None, &manifest.version, &manifest.catalog_version)?;
+    let managed_paths = (cache == managed_paths.cache).then_some(&managed_paths);
+    let lock = verify_cache_against_manifest(cache, &manifest, managed_paths)?;
+    let verified = lock
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.embedded)
+        .count();
     println!(
         "XPAD2_UPDATE_CANDIDATE_OK version={} catalog={} blobs={}",
-        manifest.version,
-        manifest.catalog_version,
-        verified.len()
+        manifest.version, manifest.catalog_version, verified
+    );
+    Ok(())
+}
+
+pub fn export_candidate_cache_command(catalog: &Catalog, args: &[String]) -> Result<()> {
+    if args.len() != 4 {
+        return Err(msg("internal candidate cache export usage error"));
+    }
+    let manifest = verify_candidate_identity(catalog, Path::new(&args[0]), Path::new(&args[1]))?;
+    let catalog_signature = read_regular_limited(Path::new(&args[2]), MAX_SIGNATURE_SIZE)?;
+    let embedded_catalog = catalog::embedded_catalog_raw();
+    if embedded_catalog.len() as u64 != manifest.catalog.size
+        || sha256_bytes(embedded_catalog) != manifest.catalog.sha256
+    {
+        return Err(msg(
+            "candidate embedded catalog identity does not match update manifest",
+        ));
+    }
+    catalog::verify_catalog_signature(embedded_catalog, &catalog_signature)?;
+    let exported =
+        catalog::export_embedded_cache(catalog, &catalog_signature, Path::new(&args[3]))?;
+    println!(
+        "XPAD2_UPDATE_CACHE_EXPORT_OK version={} catalog={} blobs={}",
+        manifest.version, manifest.catalog_version, exported
     );
     Ok(())
 }
@@ -646,10 +737,18 @@ fn validate_github_release(release: &GitHubRelease, requested: Option<&str>) -> 
 }
 
 fn github_asset<'a>(release: &'a GitHubRelease, name: &str) -> Result<&'a GitHubAsset> {
+    github_asset_optional(release, name)?
+        .ok_or_else(|| msg(format!("GitHub release asset missing: {name}")))
+}
+
+fn github_asset_optional<'a>(
+    release: &'a GitHubRelease,
+    name: &str,
+) -> Result<Option<&'a GitHubAsset>> {
     let mut matches = release.assets.iter().filter(|asset| asset.name == name);
-    let asset = matches
-        .next()
-        .ok_or_else(|| msg(format!("GitHub release asset missing: {name}")))?;
+    let Some(asset) = matches.next() else {
+        return Ok(None);
+    };
     if matches.next().is_some() {
         return Err(msg(format!(
             "GitHub release contains duplicate asset: {name}"
@@ -665,7 +764,7 @@ fn github_asset<'a>(release: &'a GitHubRelease, name: &str) -> Result<&'a GitHub
     if parsed.host_str() != Some("api.github.com") || !asset.url.starts_with(&expected_prefix) {
         return Err(msg(format!("untrusted GitHub asset API URL for {name}")));
     }
-    Ok(asset)
+    Ok(Some(asset))
 }
 
 fn validate_github_release_manifest(
@@ -875,6 +974,73 @@ fn request(agent: &ureq::Agent, url: &str, accept: Option<&str>) -> ureq::Reques
     request
 }
 
+fn response_retry_after(response: &ureq::Response) -> Option<Duration> {
+    if let Some(seconds) = response
+        .header("Retry-After")
+        .and_then(|value| value.trim().parse::<u64>().ok())
+    {
+        return Some(Duration::from_secs(seconds));
+    }
+    let reset = response
+        .header("X-RateLimit-Reset")?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    Some(Duration::from_secs(reset.saturating_sub(now).max(1)))
+}
+
+fn classify_ureq_error(error: ureq::Error, label: &str) -> HttpFailure {
+    match error {
+        ureq::Error::Status(status, response) => {
+            let rate_limited = status == 429
+                || (status == 403
+                    && response
+                        .header("X-RateLimit-Remaining")
+                        .is_some_and(|value| value.trim() == "0"));
+            let message = if rate_limited {
+                format!("HTTPS {label} rate limited (HTTP {status})")
+            } else {
+                format!("HTTPS {label} failed with HTTP {status}")
+            };
+            if rate_limited || status == 408 || status == 425 || (500..=599).contains(&status) {
+                HttpFailure::Retryable {
+                    message,
+                    retry_after: response_retry_after(&response),
+                }
+            } else {
+                HttpFailure::Fatal(message)
+            }
+        }
+        ureq::Error::Transport(error) => HttpFailure::Retryable {
+            message: format!("HTTPS {label} transport failed: {error}"),
+            retry_after: None,
+        },
+    }
+}
+
+fn retry_delay(failure: &HttpFailure, attempt: u32) -> Result<Duration> {
+    match failure {
+        HttpFailure::Fatal(message) => Err(msg(message.clone())),
+        HttpFailure::Retryable {
+            message,
+            retry_after,
+        } => {
+            let delay = retry_after.unwrap_or_else(|| Duration::from_secs(attempt as u64));
+            if delay > MAX_AUTOMATIC_RETRY_DELAY {
+                return Err(msg(format!(
+                    "{message}; server requires waiting about {} seconds, retry later",
+                    delay.as_secs()
+                )));
+            }
+            Ok(delay)
+        }
+    }
+}
+
 fn fetch_small(agent: &ureq::Agent, url: &str, max: usize, label: &str) -> Result<Vec<u8>> {
     fetch_small_with_optional_accept(agent, url, max, label, None)
 }
@@ -896,22 +1062,28 @@ fn fetch_small_with_optional_accept(
     label: &str,
     accept: Option<&str>,
 ) -> Result<Vec<u8>> {
-    let mut last_error = None;
+    let mut last_error = None::<String>;
     for attempt in 1..=DOWNLOAD_ATTEMPTS {
         match fetch_small_once(agent, url, max, label, accept) {
             Ok(bytes) => return Ok(bytes),
-            Err(error) => {
-                if attempt < DOWNLOAD_ATTEMPTS {
-                    eprintln!(
-                        "{label} 网络请求失败（{attempt}/{DOWNLOAD_ATTEMPTS}）：{error}；即将重试…"
-                    );
-                    std::thread::sleep(Duration::from_secs(attempt as u64));
+            Err(failure) => {
+                let message = failure.message().to_string();
+                if attempt == DOWNLOAD_ATTEMPTS {
+                    return Err(msg(message));
                 }
-                last_error = Some(error);
+                let delay = retry_delay(&failure, attempt)?;
+                eprintln!(
+                    "{label} 网络请求失败（{attempt}/{DOWNLOAD_ATTEMPTS}）：{message}；{} 秒后重试…",
+                    delay.as_secs()
+                );
+                std::thread::sleep(delay);
+                last_error = Some(message);
             }
         }
     }
-    Err(last_error.unwrap_or_else(|| msg(format!("{label} download failed"))))
+    Err(msg(
+        last_error.unwrap_or_else(|| format!("{label} download failed"))
+    ))
 }
 
 fn fetch_small_once(
@@ -920,27 +1092,70 @@ fn fetch_small_once(
     max: usize,
     label: &str,
     accept: Option<&str>,
-) -> Result<Vec<u8>> {
+) -> HttpResult<Vec<u8>> {
     let response = request(agent, url, accept)
         .call()
-        .map_err(|error| msg(format!("HTTPS {label} download failed: {error}")))?;
+        .map_err(|error| classify_ureq_error(error, label))?;
     if let Some(length) = response.header("Content-Length")
         && length
             .parse::<u64>()
             .ok()
             .is_some_and(|length| length > max as u64)
     {
-        return Err(msg(format!("{label} exceeds the safe size limit")));
+        return Err(HttpFailure::Fatal(format!(
+            "{label} exceeds the safe size limit"
+        )));
     }
     let mut reader = response.into_reader().take(max as u64 + 1);
     let mut bytes = Vec::new();
     reader
         .read_to_end(&mut bytes)
-        .map_err(|error| msg(format!("HTTPS {label} read failed: {error}")))?;
+        .map_err(|error| HttpFailure::Retryable {
+            message: format!("HTTPS {label} read failed: {error}"),
+            retry_after: None,
+        })?;
     if bytes.len() > max {
-        return Err(msg(format!("{label} exceeds the safe size limit")));
+        return Err(HttpFailure::Fatal(format!(
+            "{label} exceeds the safe size limit"
+        )));
     }
     Ok(bytes)
+}
+
+fn acquire_catalog_signature(
+    verified: &VerifiedManifest,
+    workspace: &Path,
+) -> Result<Option<PathBuf>> {
+    let bytes = if let Some(root) = &verified.offline_root {
+        let source = root.join(CATALOG_SIGNATURE_FILENAME);
+        if !source.is_file() {
+            return Ok(None);
+        }
+        read_regular_limited(&source, MAX_SIGNATURE_SIZE)?
+    } else if let Some(release) = &verified.github_release {
+        let Some(asset) = github_asset_optional(release, CATALOG_SIGNATURE_FILENAME)? else {
+            return Ok(None);
+        };
+        if asset.size == 0 || asset.size > MAX_SIGNATURE_SIZE as u64 {
+            return Err(msg("GitHub catalog signature asset has an invalid size"));
+        }
+        let agent = http_agent();
+        fetch_small_with_accept(
+            &agent,
+            &asset.url,
+            MAX_SIGNATURE_SIZE,
+            "catalog signature",
+            "application/octet-stream",
+        )?
+    } else {
+        return Ok(None);
+    };
+    if bytes.is_empty() {
+        return Err(msg("catalog signature is empty"));
+    }
+    let target = workspace.join(CATALOG_SIGNATURE_FILENAME);
+    atomic_write(&target, &bytes, 0o600)?;
+    Ok(Some(target))
 }
 
 fn acquire_asset(
@@ -952,12 +1167,15 @@ fn acquire_asset(
     label: &str,
 ) -> Result<PathBuf> {
     let target = workspace.join(&asset.filename);
+    let downloaded;
     if let Some(root) = offline_root {
+        downloaded = false;
         let source = root.join(&asset.filename);
         verify_regular_file(&source)?;
         verify_file_identity(&source, asset, label)?;
         copy_atomic(&source, &target, mode)?;
     } else {
+        downloaded = true;
         println!(
             "下载 {label}：{}（{:.1} MiB）…",
             asset.filename,
@@ -971,7 +1189,9 @@ fn acquire_asset(
         };
         download_file(url, &target, asset, mode, label, accept)?;
     }
-    verify_file_identity(&target, asset, label)?;
+    if !downloaded {
+        verify_file_identity(&target, asset, label)?;
+    }
     Ok(target)
 }
 
@@ -984,22 +1204,58 @@ fn download_file(
     accept: Option<&str>,
 ) -> Result<()> {
     let agent = http_agent();
-    let mut last_error = None;
+    let mut last_error = None::<String>;
     for attempt in 1..=DOWNLOAD_ATTEMPTS {
         match download_file_once(&agent, url, target, asset, mode, label, accept) {
             Ok(()) => return Ok(()),
-            Err(error) => {
-                if attempt < DOWNLOAD_ATTEMPTS {
-                    eprintln!(
-                        "{label} 下载失败（{attempt}/{DOWNLOAD_ATTEMPTS}）：{error}；即将重试…"
-                    );
-                    std::thread::sleep(Duration::from_secs(attempt as u64));
+            Err(failure) => {
+                let message = failure.message().to_string();
+                if attempt == DOWNLOAD_ATTEMPTS {
+                    return Err(msg(message));
                 }
-                last_error = Some(error);
+                let delay = retry_delay(&failure, attempt)?;
+                eprintln!(
+                    "{label} 下载失败（{attempt}/{DOWNLOAD_ATTEMPTS}）：{message}；保留 partial，{} 秒后续传…",
+                    delay.as_secs()
+                );
+                std::thread::sleep(delay);
+                last_error = Some(message);
             }
         }
     }
-    Err(last_error.unwrap_or_else(|| msg(format!("{label} download failed"))))
+    Err(msg(
+        last_error.unwrap_or_else(|| format!("{label} download failed"))
+    ))
+}
+
+fn parse_content_range(value: &str) -> Option<(u64, u64, u64)> {
+    let value = value.trim().strip_prefix("bytes ")?;
+    let (range, total) = value.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    let start = start.parse::<u64>().ok()?;
+    let end = end.parse::<u64>().ok()?;
+    let total = total.parse::<u64>().ok()?;
+    (start <= end && end < total).then_some((start, end, total))
+}
+
+fn hash_existing_partial(path: &Path) -> HttpResult<(Sha256, u64)> {
+    let mut file = File::open(path).map_err(|error| {
+        HttpFailure::Fatal(format!("cannot open partial {}: {error}", path.display()))
+    })?;
+    let mut hasher = Sha256::new();
+    let mut total = 0u64;
+    let mut buffer = [0u8; 128 * 1024];
+    loop {
+        let count = file.read(&mut buffer).map_err(|error| {
+            HttpFailure::Fatal(format!("cannot read partial {}: {error}", path.display()))
+        })?;
+        if count == 0 {
+            break;
+        }
+        total = total.saturating_add(count as u64);
+        hasher.update(&buffer[..count]);
+    }
+    Ok((hasher, total))
 }
 
 fn download_file_once(
@@ -1010,82 +1266,186 @@ fn download_file_once(
     mode: u32,
     label: &str,
     accept: Option<&str>,
-) -> Result<()> {
-    let response = request(agent, url, accept)
-        .call()
-        .map_err(|error| msg(format!("HTTPS {label} download failed: {error}")))?;
-    if let Some(length) = response.header("Content-Length")
-        && length
-            .parse::<u64>()
-            .ok()
-            .is_some_and(|length| length != asset.size)
-    {
-        return Err(msg(format!(
-            "{label} HTTP Content-Length does not match signed manifest"
-        )));
-    }
+) -> HttpResult<()> {
     let parent = target
         .parent()
-        .ok_or_else(|| msg("download target has no parent directory"))?;
-    fs::create_dir_all(parent).at(parent)?;
-    let partial = parent.join(format!(".{}.{}.partial", asset.filename, unique_id()));
-    let result = (|| {
-        let mut output = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(0o600)
-            .open(&partial)
-            .at(&partial)?;
-        let mut reader = response.into_reader();
-        let mut hasher = Sha256::new();
-        let mut total = 0u64;
-        let mut last_progress = Instant::now();
-        let mut buffer = [0u8; 128 * 1024];
-        loop {
-            let count = reader
-                .read(&mut buffer)
-                .map_err(|error| msg(format!("HTTPS {label} read failed: {error}")))?;
-            if count == 0 {
-                break;
-            }
-            total = total
-                .checked_add(count as u64)
-                .ok_or_else(|| msg(format!("{label} size overflow")))?;
-            if total > asset.size {
-                return Err(msg(format!("{label} exceeds signed size")));
-            }
-            output.write_all(&buffer[..count]).at(&partial)?;
-            hasher.update(&buffer[..count]);
-            if last_progress.elapsed() >= Duration::from_secs(15) {
-                eprintln!(
-                    "{label} 下载进度：{:.1}/{:.1} MiB（{:.0}%）",
-                    total as f64 / 1024.0 / 1024.0,
-                    asset.size as f64 / 1024.0 / 1024.0,
-                    total as f64 * 100.0 / asset.size as f64
-                );
-                last_progress = Instant::now();
-            }
-        }
-        output.sync_all().at(&partial)?;
-        let digest = format!("{:x}", hasher.finalize());
-        if total != asset.size || digest != asset.sha256 {
-            return Err(msg(format!(
-                "{label} identity mismatch: size {total}/{} sha256 {digest}/{}",
-                asset.size, asset.sha256
+        .ok_or_else(|| HttpFailure::Fatal("download target has no parent directory".to_string()))?;
+    fs::create_dir_all(parent).map_err(|error| {
+        HttpFailure::Fatal(format!("cannot create download directory: {error}"))
+    })?;
+    let partial = parent.join(format!(".{}.partial", asset.filename));
+    if partial.exists() {
+        let metadata = fs::symlink_metadata(&partial).map_err(|error| {
+            HttpFailure::Fatal(format!(
+                "cannot inspect partial {}: {error}",
+                partial.display()
+            ))
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(HttpFailure::Fatal(format!(
+                "download partial is not a regular file: {}",
+                partial.display()
             )));
         }
-        fs::set_permissions(&partial, fs::Permissions::from_mode(mode)).at(&partial)?;
-        fs::rename(&partial, target).at(target)?;
-        println!(
-            "{label} 下载完成：{:.1} MiB",
-            total as f64 / 1024.0 / 1024.0
-        );
-        sync_parent(target)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&partial);
+        if metadata.len() > asset.size {
+            fs::remove_file(&partial).map_err(|error| {
+                HttpFailure::Fatal(format!("cannot remove oversized partial: {error}"))
+            })?;
+        } else if metadata.len() == asset.size {
+            let actual =
+                sha256_file(&partial).map_err(|error| HttpFailure::Fatal(error.to_string()))?;
+            if actual == asset.sha256 {
+                fs::set_permissions(&partial, fs::Permissions::from_mode(mode))
+                    .map_err(|error| HttpFailure::Fatal(error.to_string()))?;
+                fs::rename(&partial, target)
+                    .map_err(|error| HttpFailure::Fatal(error.to_string()))?;
+                return sync_parent(target).map_err(|error| HttpFailure::Fatal(error.to_string()));
+            }
+            fs::remove_file(&partial).map_err(|error| {
+                HttpFailure::Fatal(format!("cannot remove corrupt partial: {error}"))
+            })?;
+        }
     }
-    result
+
+    let mut offset = fs::metadata(&partial)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let mut download_request = request(agent, url, accept);
+    if offset > 0 {
+        download_request = download_request.set("Range", &format!("bytes={offset}-"));
+    }
+    let response = download_request
+        .call()
+        .map_err(|error| classify_ureq_error(error, label))?;
+    let append = if offset > 0 && response.status() == 206 {
+        let Some((start, _end, total)) = response
+            .header("Content-Range")
+            .and_then(parse_content_range)
+        else {
+            return Err(HttpFailure::Fatal(format!(
+                "{label} resume response has no valid Content-Range"
+            )));
+        };
+        if start != offset || total != asset.size {
+            return Err(HttpFailure::Fatal(format!(
+                "{label} resume Content-Range does not match signed size"
+            )));
+        }
+        true
+    } else if response.status() == 200 {
+        offset = 0;
+        false
+    } else if offset == 0 && response.status() == 206 {
+        let valid = response
+            .header("Content-Range")
+            .and_then(parse_content_range)
+            .is_some_and(|(start, _, total)| start == 0 && total == asset.size);
+        if !valid {
+            return Err(HttpFailure::Fatal(format!(
+                "{label} partial response does not match signed size"
+            )));
+        }
+        false
+    } else {
+        return Err(HttpFailure::Fatal(format!(
+            "{label} returned unexpected HTTP status {}",
+            response.status()
+        )));
+    };
+    if let Some(length) = response
+        .header("Content-Length")
+        .and_then(|length| length.parse::<u64>().ok())
+    {
+        let expected = asset.size.saturating_sub(offset);
+        if length != expected {
+            return Err(HttpFailure::Fatal(format!(
+                "{label} HTTP Content-Length does not match signed remaining size"
+            )));
+        }
+    }
+
+    let (mut hasher, existing) = if append {
+        hash_existing_partial(&partial)?
+    } else {
+        (Sha256::new(), 0)
+    };
+    if existing != offset {
+        return Err(HttpFailure::Fatal(format!(
+            "{label} partial changed while preparing resume"
+        )));
+    }
+    let mut options = OpenOptions::new();
+    options.create(true).write(true).mode(0o600);
+    if append {
+        options.append(true);
+    } else {
+        options.truncate(true);
+    }
+    let mut output = options
+        .open(&partial)
+        .map_err(|error| HttpFailure::Fatal(format!("cannot open download partial: {error}")))?;
+    let mut reader = response.into_reader();
+    let mut total = offset;
+    let mut last_progress = Instant::now();
+    let mut buffer = [0u8; 128 * 1024];
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .map_err(|error| HttpFailure::Retryable {
+                message: format!("HTTPS {label} read failed after {total} bytes: {error}"),
+                retry_after: None,
+            })?;
+        if count == 0 {
+            break;
+        }
+        total = total
+            .checked_add(count as u64)
+            .ok_or_else(|| HttpFailure::Fatal(format!("{label} size overflow")))?;
+        if total > asset.size {
+            return Err(HttpFailure::Fatal(format!("{label} exceeds signed size")));
+        }
+        output.write_all(&buffer[..count]).map_err(|error| {
+            HttpFailure::Fatal(format!("cannot write download partial: {error}"))
+        })?;
+        hasher.update(&buffer[..count]);
+        if last_progress.elapsed() >= Duration::from_secs(15) {
+            eprintln!(
+                "{label} 下载进度：{:.1}/{:.1} MiB（{:.0}%）",
+                total as f64 / 1024.0 / 1024.0,
+                asset.size as f64 / 1024.0 / 1024.0,
+                total as f64 * 100.0 / asset.size as f64
+            );
+            last_progress = Instant::now();
+        }
+    }
+    if total != asset.size {
+        return Err(HttpFailure::Retryable {
+            message: format!("HTTPS {label} ended early at {total}/{} bytes", asset.size),
+            retry_after: None,
+        });
+    }
+    output
+        .sync_all()
+        .map_err(|error| HttpFailure::Fatal(format!("cannot sync download partial: {error}")))?;
+    let digest = format!("{:x}", hasher.finalize());
+    if digest != asset.sha256 {
+        let _ = fs::remove_file(&partial);
+        return Err(HttpFailure::Retryable {
+            message: format!(
+                "{label} SHA-256 mismatch: expected {}, got {digest}",
+                asset.sha256
+            ),
+            retry_after: None,
+        });
+    }
+    fs::set_permissions(&partial, fs::Permissions::from_mode(mode))
+        .map_err(|error| HttpFailure::Fatal(error.to_string()))?;
+    fs::rename(&partial, target).map_err(|error| HttpFailure::Fatal(error.to_string()))?;
+    println!(
+        "{label} 下载完成：{:.1} MiB",
+        total as f64 / 1024.0 / 1024.0
+    );
+    sync_parent(target).map_err(|error| HttpFailure::Fatal(error.to_string()))
 }
 
 fn verify_file_identity(path: &Path, asset: &UpdateAsset, label: &str) -> Result<()> {
@@ -1115,7 +1475,10 @@ fn verify_regular_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn verify_cache_against_manifest(cache: &Path, manifest: &UpdateManifest) -> Result<AssetsLock> {
+fn load_cache_catalog_against_manifest(
+    cache: &Path,
+    manifest: &UpdateManifest,
+) -> Result<AssetsLock> {
     let catalog_path = cache.join("catalog.json");
     verify_regular_file(&catalog_path)?;
     let raw = read_limited(&catalog_path, MAX_MANIFEST_SIZE)?;
@@ -1142,14 +1505,27 @@ fn verify_cache_against_manifest(cache: &Path, manifest: &UpdateManifest) -> Res
                 artifact.id
             )));
         }
-        if artifact.embedded {
-            let blob = cache.join("blobs").join(&artifact.sha256);
-            verify_regular_file(&blob)?;
-            catalog::verify_blob(&blob, artifact)?;
-        }
     }
     if ids.is_empty() {
         return Err(msg("update catalog contains no artifacts"));
+    }
+    Ok(lock)
+}
+
+fn verify_cache_against_manifest(
+    cache: &Path,
+    manifest: &UpdateManifest,
+    managed_paths: Option<&Paths>,
+) -> Result<AssetsLock> {
+    let lock = load_cache_catalog_against_manifest(cache, manifest)?;
+    for artifact in lock.artifacts.iter().filter(|artifact| artifact.embedded) {
+        let blob = cache.join("blobs").join(&artifact.sha256);
+        if let Some(paths) = managed_paths {
+            catalog::verify_cache_blob_reference(&blob, artifact, paths)?;
+        } else {
+            verify_regular_file(&blob)?;
+            catalog::verify_blob(&blob, artifact)?;
+        }
     }
     Ok(lock)
 }
@@ -1185,7 +1561,45 @@ fn verify_candidate(
     Ok(())
 }
 
-fn install_version_cache(source: &Path, lock: &AssetsLock, target: &Path) -> Result<CacheSwap> {
+fn export_candidate_cache(
+    binary: &Path,
+    manifest: &Path,
+    signature: &Path,
+    catalog_signature: &Path,
+    destination: &Path,
+    log: &mut TransactionLog,
+) -> Result<()> {
+    let output = Command::new(binary)
+        .arg("_update-export-cache")
+        .arg(manifest)
+        .arg(signature)
+        .arg(catalog_signature)
+        .arg(destination)
+        .env_remove("XPAD2_CACHE_DIR")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| msg(format!("failed to execute candidate cache export: {error}")))?;
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.trim().is_empty() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(stderr.trim());
+    }
+    log.command_result("candidate-cache-export", output.status.success(), &text)?;
+    if !output.status.success() || !text.contains("XPAD2_UPDATE_CACHE_EXPORT_OK") {
+        return Err(msg(format!("candidate cache export failed: {text}")));
+    }
+    Ok(())
+}
+
+fn install_version_cache(
+    source: &Path,
+    lock: &AssetsLock,
+    target: &Path,
+    paths: &Paths,
+) -> Result<CacheSwap> {
     let parent = target
         .parent()
         .ok_or_else(|| msg("managed cache target has no parent"))?;
@@ -1213,13 +1627,7 @@ fn install_version_cache(source: &Path, lock: &AssetsLock, target: &Path) -> Res
             &staging.join("catalog.sig"),
             0o600,
         )?;
-        for artifact in lock.artifacts.iter().filter(|artifact| artifact.embedded) {
-            copy_atomic(
-                &source.join("blobs").join(&artifact.sha256),
-                &staging.join("blobs").join(&artifact.sha256),
-                0o600,
-            )?;
-        }
+        catalog::populate_deduplicated_blobs(source, &staging, paths, lock)?;
         if target.exists() {
             fs::rename(target, &previous).at(target)?;
         }
@@ -1419,6 +1827,8 @@ fn profile_from_catalog(profile: &DeviceProfile) -> UpdateProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
     use zip::ZipWriter;
     use zip::write::SimpleFileOptions;
 
@@ -1460,6 +1870,22 @@ mod tests {
         }
     }
 
+    fn read_http_headers(stream: &mut TcpStream) -> String {
+        let mut bytes = Vec::new();
+        let mut one = [0u8; 1];
+        while bytes.len() < 32 * 1024 {
+            let count = stream.read(&mut one).unwrap();
+            if count == 0 {
+                break;
+            }
+            bytes.push(one[0]);
+            if bytes.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        String::from_utf8(bytes).unwrap()
+    }
+
     fn github_release() -> GitHubRelease {
         let asset = |name: &str, size: u64, digest: Option<String>, id: u64| GitHubAsset {
             name: name.to_string(),
@@ -1495,6 +1921,80 @@ mod tests {
     #[test]
     fn strict_manifest_accepts_the_release_shape() {
         validate_manifest(&manifest()).unwrap();
+    }
+
+    #[test]
+    fn content_range_parser_is_strict() {
+        assert_eq!(parse_content_range("bytes 10-19/20"), Some((10, 19, 20)));
+        for invalid in ["10-19/20", "bytes 20-19/20", "bytes 0-20/20", "bytes */20"] {
+            assert_eq!(parse_content_range(invalid), None);
+        }
+    }
+
+    #[test]
+    fn long_server_retry_delay_is_not_spun_on() {
+        let failure = HttpFailure::Retryable {
+            message: "rate limited".to_string(),
+            retry_after: Some(Duration::from_secs(600)),
+        };
+        assert!(retry_delay(&failure, 1).is_err());
+    }
+
+    #[test]
+    fn interrupted_download_resumes_with_http_range() {
+        let body = (0..256 * 1024)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let split = body.len() / 2;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_body = body.clone();
+        let server = thread::spawn(move || {
+            let (mut first, _) = listener.accept().unwrap();
+            let first_headers = read_http_headers(&mut first);
+            assert!(!first_headers.to_ascii_lowercase().contains("\r\nrange:"));
+            write!(
+                first,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                server_body.len()
+            )
+            .unwrap();
+            first.write_all(&server_body[..split]).unwrap();
+            drop(first);
+
+            let (mut second, _) = listener.accept().unwrap();
+            let second_headers = read_http_headers(&mut second);
+            assert!(
+                second_headers
+                    .to_ascii_lowercase()
+                    .contains(&format!("\r\nrange: bytes={split}-"))
+            );
+            write!(
+                second,
+                "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nConnection: close\r\n\r\n",
+                server_body.len() - split,
+                split,
+                server_body.len() - 1,
+                server_body.len()
+            )
+            .unwrap();
+            second.write_all(&server_body[split..]).unwrap();
+        });
+
+        let root = test_dir("range-resume");
+        fs::create_dir_all(&root).unwrap();
+        let target = root.join("asset.bin");
+        let asset = UpdateAsset {
+            filename: "asset.bin".to_string(),
+            url: format!("http://{address}/asset.bin"),
+            size: body.len() as u64,
+            sha256: sha256_bytes(&body),
+        };
+        download_file(&asset.url, &target, &asset, 0o600, "range-test", None).unwrap();
+        server.join().unwrap();
+        assert_eq!(fs::read(&target).unwrap(), body);
+        assert!(!root.join(".asset.bin.partial").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

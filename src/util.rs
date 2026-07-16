@@ -16,6 +16,7 @@ pub struct Paths {
     pub root: PathBuf,
     pub cache: PathBuf,
     pub cache_is_explicit: bool,
+    pub managed_blob_root: PathBuf,
     pub managed_cache_root: PathBuf,
     pub work: PathBuf,
     pub state: PathBuf,
@@ -34,6 +35,7 @@ impl Paths {
             .or_else(|| std::env::var_os("XPAD2_CACHE_DIR").map(PathBuf::from));
         let cache_is_explicit = cache_override.is_some();
         let state_root = PathBuf::from(DEFAULT_ROOT);
+        let managed_blob_root = state_root.join("cache").join("blobs");
         let managed_cache_root = state_root.join("cache").join("releases");
         let cache = match cache_override {
             Some(path) => path,
@@ -42,6 +44,7 @@ impl Paths {
         Ok(Self {
             cache,
             cache_is_explicit,
+            managed_blob_root,
             managed_cache_root,
             work: state_root.join("work"),
             state: state_root.join("state"),
@@ -62,6 +65,7 @@ impl Paths {
     pub fn ensure(&self) -> Result<()> {
         for path in [
             &self.root,
+            &self.managed_blob_root,
             &self.managed_cache_root,
             &self.cache,
             &self.work,

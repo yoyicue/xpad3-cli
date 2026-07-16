@@ -15,6 +15,7 @@ UPDATE_PACKAGE="$STAGE/xpad2-update"
 BINARY="$ROOT/target/aarch64-linux-android/release/xpad2"
 UPDATE_MANIFEST="$DIST/xpad2-update.json"
 UPDATE_SIGNATURE="$DIST/xpad2-update.json.sig"
+CATALOG_SIGNATURE="$DIST/catalog.sig"
 UPDATE_BUNDLE="$DIST/xpad2-update-v$VERSION.zip"
 REPOSITORY="https://github.com/yoyicue/xpad2-cli"
 
@@ -116,7 +117,7 @@ done < <(jq -r '.artifacts[] | select(.embedded == true) | [.id,.filename,.sha25
 rm -f "$DIST/xpad2-v$VERSION-android-arm64" \
   "$DIST/xpad2-v$VERSION-android-arm64.zip" \
   "$DIST/xpad2-cache-v$VERSION.zip" \
-  "$UPDATE_MANIFEST" "$UPDATE_SIGNATURE" "$UPDATE_BUNDLE" \
+  "$UPDATE_MANIFEST" "$UPDATE_SIGNATURE" "$CATALOG_SIGNATURE" "$UPDATE_BUNDLE" \
   "$DIST/SHA256SUMS"
 for manager_filename in "${MANAGER_FILES[@]}"; do
   rm -f "$DIST/$manager_filename"
@@ -135,6 +136,8 @@ done < <(jq -r '.artifacts[] | select(.id == "ksu-manager" or .id == "suu-manage
   zip -X -q -r "$DIST/xpad2-cache-v$VERSION.zip" xpad2-cache
 )
 cp "$ROOT/assets.lock.json" "$ROOT/sources.lock.json" "$DIST/"
+cp "$CACHE/catalog.sig" "$CATALOG_SIGNATURE"
+chmod 644 "$CATALOG_SIGNATURE"
 
 BINARY_FILENAME="xpad2-v$VERSION-android-arm64"
 CACHE_FILENAME="xpad2-cache-v$VERSION.zip"
@@ -195,11 +198,12 @@ chmod 644 "$UPDATE_MANIFEST"
 
 rm -rf "$UPDATE_PACKAGE"
 mkdir -p "$UPDATE_PACKAGE"
-cp "$UPDATE_MANIFEST" "$UPDATE_SIGNATURE" "$DIST/$BINARY_FILENAME" \
+cp "$UPDATE_MANIFEST" "$UPDATE_SIGNATURE" "$CATALOG_SIGNATURE" "$DIST/$BINARY_FILENAME" \
   "$DIST/$CACHE_FILENAME" "$UPDATE_PACKAGE/"
 chmod 755 "$UPDATE_PACKAGE/$BINARY_FILENAME"
 chmod 644 "$UPDATE_PACKAGE/xpad2-update.json" \
   "$UPDATE_PACKAGE/xpad2-update.json.sig" \
+  "$UPDATE_PACKAGE/catalog.sig" \
   "$UPDATE_PACKAGE/$CACHE_FILENAME"
 (
   cd "$STAGE"
@@ -214,7 +218,7 @@ chmod 644 "$UPDATE_PACKAGE/xpad2-update.json" \
     "xpad2-cache-v$VERSION.zip" \
     "${MANAGER_FILES[@]}" \
     assets.lock.json sources.lock.json \
-    xpad2-update.json xpad2-update.json.sig \
+    xpad2-update.json xpad2-update.json.sig catalog.sig \
     "xpad2-update-v$VERSION.zip" > SHA256SUMS
 )
 rm -rf "$STAGE"

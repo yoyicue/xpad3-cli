@@ -32,6 +32,9 @@ openssl dgst -sha256 -verify "$ROOT/keys/catalog-release-public.pem" \
 openssl dgst -sha256 -verify "$ROOT/keys/catalog-release-public.pem" \
   -signature "$DIST/xpad2-update.json.sig" \
   "$DIST/xpad2-update.json" >/dev/null
+openssl dgst -sha256 -verify "$ROOT/keys/catalog-release-public.pem" \
+  -signature "$DIST/catalog.sig" \
+  "$ROOT/assets.lock.json" >/dev/null
 cp "$DIST/xpad2-update.json" "$tmp_dir/tampered-update.json"
 printf '\n' >> "$tmp_dir/tampered-update.json"
 if openssl dgst -sha256 -verify "$ROOT/keys/catalog-release-public.pem" \
@@ -80,9 +83,10 @@ jq -e \
 ' "$DIST/xpad2-update.json" >/dev/null
 
 update_package="$tmp_dir/xpad2-update"
-[[ "$(find "$update_package" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" == 4 ]]
+[[ "$(find "$update_package" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" == 5 ]]
 cmp -s "$DIST/xpad2-update.json" "$update_package/xpad2-update.json"
 cmp -s "$DIST/xpad2-update.json.sig" "$update_package/xpad2-update.json.sig"
+cmp -s "$DIST/catalog.sig" "$update_package/catalog.sig"
 cmp -s "$DIST/$binary_filename" "$update_package/$binary_filename"
 cmp -s "$DIST/$cache_filename" "$update_package/$cache_filename"
 

@@ -122,28 +122,33 @@ APK；`xpad-installer` 是独立仓库产生的设备 CLI `/data/local/tmp/xpad-
 默认 `xpad2 update` 通过 `api.github.com` 的 Latest Release 元数据定位固定名的
 `xpad2-update.json`、签名和 asset ID，再由 API 重定向到 release-assets 下载域；不要求
 设备能够直连 `github.com:443`。HTTPS 只负责传输，GitHub API JSON 本身不作为信任根；
-更新清单、目标 ELF、匹配的 cache ZIP、catalog 和 `/260` profile 均由内置 production
-RSA 公钥及 SHA-256 验证。目标 ELF 在替换前必须以候选进程完成一次自检，替换后再完成
-一次相同自检。每个网络对象最多三次有界重试，大文件每 15 秒输出一次真实进度。
+更新清单、目标 ELF、catalog 签名和 `/260` profile 均由内置 production RSA 公钥及
+SHA-256 验证。新候选 ELF 验证自身后直接导出其内嵌 cache，正常在线更新不再重复下载
+约 30 MiB 的 cache ZIP；该 ZIP 只为旧 updater 和独立离线导入保留。目标 ELF 在替换前后
+均以候选进程自检。下载 partial 支持 HTTP Range 续传；只重试网络/5xx 等暂态错误，
+GitHub 403/429 会遵循 `Retry-After`/rate-limit reset，而不是短间隔空转。
 
 ```sh
 xpad2 update --check             # 只检查，不下载大文件、不修改设备
 xpad2 update                     # 更新到最新稳定版
-xpad2 update --version 0.4.4     # 选择精确发布版本
+xpad2 update --version 0.4.5     # 选择精确发布版本
 xpad2 update --reinstall         # 同版本修复性重装
 xpad2 update --offline FILE.zip  # 无网络时使用完整离线更新包
 ```
 
 更新无需 Root，也不改变 KSU、APK、OTA 冻结状态或用户数据。安装使用同文件系统的
-`.partial + fsync + rename` 原子替换；旧 ELF 最多保留三份用于失败恢复。低版本不会被
+`.partial + fsync + rename` 原子替换；旧 ELF 只保留一份用于失败恢复。低版本不会被
 自动安装；显式降级还必须同时给出 `--version`/`--offline` 和
 `--allow-downgrade`。首次从 v0.1.x 升到 v0.2.0 或更高版本仍需执行一次手工
 `adb push`，因为旧 ELF 本身没有 updater。
 
 ## 离线目录缓存
 
-默认运行目录为 `/data/local/tmp/.xpad2`，每个产品/catalog 组合使用独立的
-`cache/releases/<product>--<catalog>/`，因此新旧 ELF 可以安全并存和回滚。也可使用：
+默认运行目录为 `/data/local/tmp/.xpad2`。每个产品/catalog 仍使用独立且签名的
+`cache/releases/<product>--<catalog>/` 元数据，但制品实体统一存入按 SHA-256 命名的
+`cache/blobs/`，release 目录仅保留指向内容仓库的受校验引用，不复制 blob。自动回收只
+保留当前与一个回滚 release。
+也可使用：
 
 ```sh
 xpad2 install full --cache-dir /data/local/tmp/xpad2-cache
@@ -152,8 +157,8 @@ XPAD2_CACHE_DIR=/data/local/tmp/xpad2-cache xpad2 install full
 
 外部缓存必须同时满足：RSA 发布签名有效、catalog 属于当前 `xpad2` 版本、每个条目
 仍在当前 `assets.lock.json` 中、blob 大小和 SHA-256 正确。缓存不能引入产品未锁定的
-新版本；损坏缓存会安全失败，不会执行其中的 ELF。自更新把匹配 cache 写入目标版本
-自己的目录，不会覆盖当前版本目录。通过 `--cache-dir` 或 `XPAD2_CACHE_DIR` 显式选择
+新版本；损坏缓存会安全失败，不会执行其中的 ELF。自更新由候选 ELF 导出并校验匹配
+cache，不会信任旧进程凭空生成制品。通过 `--cache-dir` 或 `XPAD2_CACHE_DIR` 显式选择
 的缓存仍保持严格失败；为避免把任意目录卷入跨版本事务，自更新时禁止该覆盖参数。
 
 ## 诊断
