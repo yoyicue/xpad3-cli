@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "product_version": "0.4.3",
+  "product_version": "0.4.4",
   "sources": [
     {
       "component": "ionstack",
@@ -73,8 +73,8 @@
     {
       "component": "boominstaller",
       "repository": "https://github.com/yoyicue/BoomInstaller",
-      "commit": "e0623286aa5c17d0d886a68cc14bfac29e4399a4",
-      "tag": "v13.6.0.r12.e062328",
+      "commit": "33060a05c0c731e1136d6e09e2e25541b7367025",
+      "tag": "v13.6.0.r13.33060a0",
       "license": "Apache-2.0"
     }
   ]

@@ -13,7 +13,9 @@ separate processes/files at runtime. Their exact binary and source identities ar
 - SukiSU Ultra late-load kernel module: GPL-2.0-only; `ksud-sukisu-xpad2` and the official
   SukiSU Ultra Manager: GPL-3.0-only. Their license texts are included separately.
 - `xpad-installer`: GPL-3.0-only; its upstream LICENSE is included.
-- BoomInstaller: Apache-2.0; its LICENSE and fork attribution/modification notice are included.
+- BoomInstaller control plane: Apache-2.0; its LICENSE and fork attribution/modification notice
+  are included. Its separately executed embedded `xpad-installer` engine is GPL-3.0-only and
+  carries the corresponding source identity and license in the APK.
 - Rust dependencies retain their own licenses. The release package contains an inventory and
   the license files collected from the exact crate sources selected by `Cargo.lock`.
 
