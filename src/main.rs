@@ -16,7 +16,7 @@ use crate::catalog::Catalog;
 use crate::error::{Error, Result, msg};
 use crate::logging::TransactionLog;
 use crate::model::{ComponentState, Receipt};
-use crate::util::{OperationLock, Paths, boot_id, output_text, run, selinux};
+use crate::util::{OperationLock, Paths, boot_id, selinux};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -436,6 +436,7 @@ fn command_cleanup(paths: &Paths) -> Result<()> {
     let mut log = TransactionLog::start(paths, "cleanup")?;
     let started_boot = boot_id();
     let started_selinux = selinux();
+    let mut installer_cleanup_error: Option<Error> = None;
     if device::root_status().state == ComponentState::Active {
         let session = root::RootSession {
             owned: true,
@@ -443,14 +444,27 @@ fn command_cleanup(paths: &Paths) -> Result<()> {
         };
         session.close(&mut log)?;
     }
-    if Path::new("/data/local/tmp/xpad-install").exists()
-        && let Ok(output) = run("/data/local/tmp/xpad-install", &["cleanup"])
-    {
-        log.command_result(
+    if Path::new("/data/local/tmp/xpad-install").exists() {
+        match log.run_streaming(
             "xpad-install cleanup",
-            output.status.success(),
-            &output_text(&output),
-        )?;
+            "/data/local/tmp/xpad-install",
+            &["cleanup"],
+        ) {
+            Ok(output) if output.status.success() => {}
+            Ok(output) if output.status.code() == Some(75) => {
+                installer_cleanup_error = Some(crate::error::needs_reboot(
+                    "xpad-install cleanup found a per-boot unsafe state",
+                ));
+            }
+            Ok(output) => {
+                installer_cleanup_error = Some(msg(format!(
+                    "xpad-install cleanup failed (exit {:?}): {}",
+                    output.status.code(),
+                    output.text
+                )));
+            }
+            Err(error) => installer_cleanup_error = Some(error),
+        }
     }
     install::cleanup_work(paths)?;
     for path in [
@@ -465,16 +479,21 @@ fn command_cleanup(paths: &Paths) -> Result<()> {
     let receipt = Receipt {
         transaction_id: log.id.clone(),
         operation: "cleanup".to_string(),
-        success: true,
+        success: installer_cleanup_error.is_none(),
         started_boot_id: started_boot,
         ended_boot_id: boot_id(),
         started_selinux,
         ended_selinux: selinux(),
         components: vec![],
-        error: None,
-        needs_reboot: false,
+        error: installer_cleanup_error.as_ref().map(ToString::to_string),
+        needs_reboot: installer_cleanup_error
+            .as_ref()
+            .is_some_and(Error::requires_reboot),
     };
     log.write_receipt(paths, &receipt)?;
+    if let Some(error) = installer_cleanup_error {
+        return Err(error);
+    }
     println!("cleanup complete; artifact cache was preserved");
     Ok(())
 }

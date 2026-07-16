@@ -5,10 +5,12 @@ use crate::util::{
 };
 use serde_json::{Map, Value, json};
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::{OnceLock, mpsc};
+use std::thread;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
@@ -17,8 +19,12 @@ pub struct TransactionLog {
     pub dir: PathBuf,
     events: File,
     raw: File,
-    raw_lines_since_sync: u32,
     active_path: PathBuf,
+}
+
+pub struct LoggedCommandOutput {
+    pub status: ExitStatus,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -57,7 +63,6 @@ impl TransactionLog {
             dir,
             events,
             raw,
-            raw_lines_since_sync: 0,
             active_path: paths.state.join("active-transaction.json"),
         };
         let active = ActiveTransaction {
@@ -97,13 +102,83 @@ impl TransactionLog {
         let redacted = redact(line);
         writeln!(self.raw, "[{source}] {redacted}").at(self.dir.join("raw.log"))?;
         self.raw.flush().at(self.dir.join("raw.log"))?;
-        self.raw_lines_since_sync += 1;
-        if self.raw_lines_since_sync >= 16 {
-            self.raw.sync_data().at(self.dir.join("raw.log"))?;
-            self.raw_lines_since_sync = 0;
-        }
+        self.raw.sync_data().at(self.dir.join("raw.log"))?;
         println!("{redacted}");
         Ok(())
+    }
+
+    pub fn run_streaming(
+        &mut self,
+        name: &str,
+        program: &str,
+        args: &[&str],
+    ) -> Result<LoggedCommandOutput> {
+        self.event("command", "started", json!({"name": name}))?;
+        let mut child = match Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => {
+                self.event(
+                    "command",
+                    "failed",
+                    json!({"name": name, "spawn_error": error.to_string()}),
+                )?;
+                return Err(msg(format!("failed to execute {program}: {error}")));
+            }
+        };
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| msg(format!("cannot capture stdout for {program}")))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| msg(format!("cannot capture stderr for {program}")))?;
+        let (sender, receiver) = mpsc::channel::<(&'static str, String)>();
+        let stdout_thread = stream_reader(stdout, "stdout", sender.clone());
+        let stderr_thread = stream_reader(stderr, "stderr", sender.clone());
+        drop(sender);
+
+        let mut combined = String::new();
+        for (stream, line) in receiver {
+            if !combined.is_empty() {
+                combined.push('\n');
+            }
+            combined.push_str(&line);
+            self.line(&format!("{name}/{stream}"), &line)?;
+        }
+        let status = child
+            .wait()
+            .map_err(|error| msg(format!("failed waiting for {program}: {error}")))?;
+        for (stream, handle) in [("stdout", stdout_thread), ("stderr", stderr_thread)] {
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    return Err(msg(format!(
+                        "failed reading {stream} from {program}: {error}"
+                    )));
+                }
+                Err(_) => return Err(msg(format!("{stream} reader panicked for {program}"))),
+            }
+        }
+        self.event(
+            "command",
+            if status.success() {
+                "succeeded"
+            } else {
+                "failed"
+            },
+            json!({"name": name, "exit_code": status.code()}),
+        )?;
+        Ok(LoggedCommandOutput {
+            status,
+            text: combined,
+        })
     }
 
     pub fn command_result(&mut self, name: &str, success: bool, output: &str) -> Result<()> {
@@ -145,6 +220,36 @@ impl TransactionLog {
         }
         Ok(())
     }
+}
+
+fn stream_reader<R: Read + Send + 'static>(
+    reader: R,
+    stream: &'static str,
+    sender: mpsc::Sender<(&'static str, String)>,
+) -> thread::JoinHandle<std::io::Result<()>> {
+    thread::spawn(move || {
+        let mut reader = BufReader::new(reader);
+        let mut bytes = Vec::new();
+        loop {
+            bytes.clear();
+            let count = reader.read_until(b'\n', &mut bytes)?;
+            if count == 0 {
+                return Ok(());
+            }
+            if bytes.last() == Some(&b'\n') {
+                bytes.pop();
+            }
+            if bytes.last() == Some(&b'\r') {
+                bytes.pop();
+            }
+            if sender
+                .send((stream, String::from_utf8_lossy(&bytes).into_owned()))
+                .is_err()
+            {
+                return Ok(());
+            }
+        }
+    })
 }
 
 pub fn transaction_warnings(paths: &Paths) -> Vec<String> {
@@ -322,7 +427,7 @@ pub fn export_logs(paths: &Paths, destination: &Path) -> Result<PathBuf> {
         capture(
             &staging.join("logcat-current.txt"),
             "/system/bin/logcat",
-            &["-b", "all", "-d", "-t", "3000"],
+            &["-b", "all", "-d"],
         )?;
         capture(
             &staging.join("logcat-previous-boot.txt"),
@@ -334,7 +439,34 @@ pub fn export_logs(paths: &Paths, destination: &Path) -> Result<PathBuf> {
             "/system/bin/dumpsys",
             &["dropbox", "--print", "SYSTEM_LAST_KMSG"],
         )?;
+        capture(
+            &staging.join("system-server-crash-dropbox.txt"),
+            "/system/bin/dumpsys",
+            &["dropbox", "--print", "system_server_crash"],
+        )?;
+        capture(
+            &staging.join("system-app-crash-dropbox.txt"),
+            "/system/bin/dumpsys",
+            &["dropbox", "--print", "system_app_crash"],
+        )?;
+        capture(
+            &staging.join("process-exit-info.txt"),
+            "/system/bin/dumpsys",
+            &["activity", "exit-info"],
+        )?;
+        capture(
+            &staging.join("activity-processes.txt"),
+            "/system/bin/dumpsys",
+            &["activity", "processes"],
+        )?;
         capture(&staging.join("dmesg.txt"), "/system/bin/dmesg", &[])?;
+        if Path::new("/data/local/tmp/xpad-install").is_file() {
+            capture(
+                &staging.join("xpad-install-self-test.txt"),
+                "/data/local/tmp/xpad-install",
+                &["self-test"],
+            )?;
+        }
         capture(
             &staging.join("ksu-package.txt"),
             "/system/bin/dumpsys",
@@ -369,6 +501,15 @@ pub fn export_logs(paths: &Paths, destination: &Path) -> Result<PathBuf> {
         add_tree(&mut zip, &staging, "diagnostics", options)?;
         if paths.logs.exists() {
             add_tree(&mut zip, &paths.logs, "transactions", options)?;
+        }
+        let installer_incidents = Path::new("/data/local/tmp/.xpad-installer/logs");
+        if installer_incidents.exists() {
+            add_tree(
+                &mut zip,
+                installer_incidents,
+                "xpad-installer-incidents",
+                options,
+            )?;
         }
         if Path::new("/sys/fs/pstore").is_dir() {
             let _ = add_tree(&mut zip, Path::new("/sys/fs/pstore"), "pstore", options);
@@ -447,6 +588,40 @@ mod tests {
                 "not redacted: {line}"
             );
         }
+    }
+
+    #[test]
+    fn streaming_command_persists_stdout_stderr_and_exit_code() {
+        let root = std::env::temp_dir().join(format!("xpad2-stream-test-{}", unique_id()));
+        let paths = Paths {
+            root: root.clone(),
+            cache: root.join("cache"),
+            cache_is_explicit: false,
+            managed_cache_root: root.join("cache").join("releases"),
+            work: root.join("work"),
+            state: root.join("state"),
+            logs: root.join("logs"),
+            lock: root.join("operation.lock"),
+        };
+        let mut log = TransactionLog::start(&paths, "stream-test").expect("start transaction");
+        let output = log
+            .run_streaming(
+                "fixture",
+                "/bin/sh",
+                &[
+                    "-c",
+                    "printf 'phase-one\\n'; printf 'phase-two\\n' >&2; exit 75",
+                ],
+            )
+            .expect("stream command");
+        assert_eq!(output.status.code(), Some(75));
+        assert!(output.text.contains("phase-one"));
+        assert!(output.text.contains("phase-two"));
+        let raw = fs::read_to_string(log.dir.join("raw.log")).expect("read durable raw log");
+        assert!(raw.contains("phase-one"));
+        assert!(raw.contains("phase-two"));
+        drop(log);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

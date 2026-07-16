@@ -236,24 +236,32 @@ pub fn cli_status(artifact: &Artifact) -> ComponentStatus {
     match sha256_file(path) {
         Ok(actual) if actual == artifact.sha256 => {
             if artifact.id == "xpad-installer" {
-                match run(target, &["doctor"]) {
-                    Ok(output) if output.status.success() => status(
-                        &artifact.id,
-                        ComponentState::Installed,
-                        Some("locked hash and doctor verified"),
-                    ),
+                match run(target, &["self-test"]) {
+                    Ok(output)
+                        if output.status.success()
+                            && output_text(&output)
+                                .contains("XPAD_INSTALL_SELF_TEST status=ok") =>
+                    {
+                        status(
+                            &artifact.id,
+                            ComponentState::Installed,
+                            Some("locked hash and read-only self-test verified"),
+                        )
+                    }
                     Ok(output) => status(
                         &artifact.id,
                         ComponentState::Broken,
                         Some(&format!(
-                            "locked hash; doctor failed: {}",
+                            "locked hash; read-only self-test failed: {}",
                             output_text(&output)
                         )),
                     ),
                     Err(error) => status(
                         &artifact.id,
                         ComponentState::Broken,
-                        Some(&format!("locked hash; doctor unavailable: {error}")),
+                        Some(&format!(
+                            "locked hash; read-only self-test unavailable: {error}"
+                        )),
                     ),
                 }
             } else {

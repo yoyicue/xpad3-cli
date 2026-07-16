@@ -6,8 +6,8 @@ use crate::logging::TransactionLog;
 use crate::model::{ApkIdentity, Artifact, ComponentState};
 use crate::root::RootSession;
 use crate::util::{
-    Paths, atomic_write, copy_atomic, output_text, run, safe_filename, sha256_bytes, sha256_file,
-    shell_quote, validate_elf_arm64,
+    Paths, atomic_write, copy_atomic, safe_filename, sha256_bytes, sha256_file, shell_quote,
+    validate_elf_arm64,
 };
 use serde_json::json;
 use std::fs;
@@ -53,17 +53,16 @@ pub fn install_locked_cli(
         return Err(msg(format!("post-install SHA-256 mismatch for {id}")));
     }
     if id == "xpad-installer" {
-        let output = run(target, &["doctor"])?;
-        log.command_result(
-            "xpad-install doctor",
-            output.status.success(),
-            &output_text(&output),
-        )?;
+        let output = log.run_streaming("xpad-install self-test", target, &["self-test"])?;
         if !output.status.success() {
             return Err(classify_installer_error(
-                "xpad-install doctor",
-                &output_text(&output),
+                "xpad-install self-test",
+                output.status.code(),
+                &output.text,
             ));
+        }
+        if !output.text.contains("XPAD_INSTALL_SELF_TEST status=ok") {
+            return Err(msg("xpad-install self-test returned no success marker"));
         }
         ensure_installer_backup(log)?;
     }
@@ -79,11 +78,17 @@ pub fn ensure_installer_backup(log: &mut TransactionLog) -> Result<bool> {
         ));
     }
     println!("检查 0044 备用安装身份（健康时不创建事务）…");
-    let output = run(XPAD_INSTALL, &["znxrun", "ensure"])?;
-    let text = output_text(&output);
-    log.command_result("xpad-install znxrun ensure", output.status.success(), &text)?;
+    let output = log.run_streaming(
+        "xpad-install znxrun ensure",
+        XPAD_INSTALL,
+        &["znxrun", "ensure"],
+    )?;
     if !output.status.success() {
-        return Err(classify_installer_error("installer-backup repair", &text));
+        return Err(classify_installer_error(
+            "installer-backup repair",
+            output.status.code(),
+            &output.text,
+        ));
     }
     let state = device::installer_backup_status();
     if state.state != ComponentState::Active {
@@ -92,7 +97,7 @@ pub fn ensure_installer_backup(log: &mut TransactionLog) -> Result<bool> {
             state.detail.unwrap_or_default()
         )));
     }
-    let changed = text.contains("ZNXRUN_ENSURE result=repaired");
+    let changed = output.text.contains("ZNXRUN_ENSURE result=repaired");
     log.event(
         "component",
         if changed { "repaired" } else { "verified" },
@@ -412,10 +417,12 @@ fn install_apk_with_xpad_install(
         "installing",
         json!({"package": identity.package, "version_code": identity.version_code, "operation": verb, "backend": backend}),
     )?;
-    let output = run(XPAD_INSTALL, &[verb, "--backend", backend, path_text])?;
-    let text = output_text(&output);
     let command_name = format!("xpad-install {verb} --backend {backend}");
-    log.command_result(&command_name, output.status.success(), &text)?;
+    let output = log.run_streaming(
+        &command_name,
+        XPAD_INSTALL,
+        &[verb, "--backend", backend, path_text],
+    )?;
     if !output.status.success() {
         return Err(classify_installer_error(
             if already_installed {
@@ -423,7 +430,8 @@ fn install_apk_with_xpad_install(
             } else {
                 "APK install"
             },
-            &text,
+            output.status.code(),
+            &output.text,
         ));
     }
     Ok(())
@@ -492,11 +500,17 @@ fn activate_boom(identity: &ApkIdentity, log: &mut TransactionLog) -> Result<()>
         json!({"autostart": true, "apk": apk_path, "starter": starter}),
     )?;
     println!("激活 BoomInstaller 并配置普通开机自启动，预计约 20–60 秒…");
-    let output = run(XPAD_INSTALL, &["activate", &starter_arg, &apk_arg])?;
-    let text = output_text(&output);
-    log.command_result("xpad-install activate", output.status.success(), &text)?;
+    let output = log.run_streaming(
+        "xpad-install activate",
+        XPAD_INSTALL,
+        &["activate", &starter_arg, &apk_arg],
+    )?;
     if !output.status.success() {
-        return Err(classify_installer_error("BoomInstaller activation", &text));
+        return Err(classify_installer_error(
+            "BoomInstaller activation",
+            output.status.code(),
+            &output.text,
+        ));
     }
     Ok(())
 }
@@ -508,9 +522,17 @@ fn boom_starter_path(apk: &Path) -> Result<PathBuf> {
     Ok(base.join("lib/arm64/libshizuku.so"))
 }
 
-fn classify_installer_error(context: &str, text: &str) -> crate::error::Error {
+fn classify_installer_error(
+    context: &str,
+    exit_code: Option<i32>,
+    text: &str,
+) -> crate::error::Error {
     let lower = text.to_ascii_lowercase();
-    if lower.contains("process is bad")
+    if exit_code == Some(75) {
+        needs_reboot(format!(
+            "{context}: xpad-install safety circuit breaker tripped; reboot clears this per-boot state"
+        ))
+    } else if lower.contains("process is bad")
         || lower.contains("bad process")
         || lower.contains("zygote") && lower.contains("bad")
     {
@@ -540,7 +562,7 @@ pub fn cleanup_work(paths: &Paths) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apk_install_plan, boom_starter_path};
+    use super::{apk_install_plan, boom_starter_path, classify_installer_error};
     use std::path::Path;
 
     #[test]
@@ -556,5 +578,11 @@ mod tests {
             boom_starter_path(apk).expect("derive starter"),
             Path::new("/data/app/example/lib/arm64/libshizuku.so")
         );
+    }
+
+    #[test]
+    fn installer_exit_75_is_always_a_reboot_requirement() {
+        let error = classify_installer_error("test", Some(75), "no textual hint");
+        assert!(error.requires_reboot());
     }
 }

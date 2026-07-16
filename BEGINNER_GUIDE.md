@@ -49,30 +49,30 @@ adb -s 你的设备序列号
 ## 3. 下载并校验 xpad2
 
 当前正式版本是
-[`v0.4.0`](https://github.com/yoyicue/xpad2-cli/releases/tag/v0.4.0)。只需要下载：
+[`v0.4.1`](https://github.com/yoyicue/xpad2-cli/releases/tag/v0.4.1)。只需要下载：
 
 ```text
-xpad2-v0.4.0-android-arm64
+xpad2-v0.4.1-android-arm64
 ```
 
 macOS 或 Linux 可以直接执行：
 
 ```sh
-curl -fLO https://github.com/yoyicue/xpad2-cli/releases/download/v0.4.0/xpad2-v0.4.0-android-arm64
-shasum -a 256 xpad2-v0.4.0-android-arm64
+curl -fLO https://github.com/yoyicue/xpad2-cli/releases/download/v0.4.1/xpad2-v0.4.1-android-arm64
+shasum -a 256 xpad2-v0.4.1-android-arm64
 ```
 
 Windows PowerShell 可以执行：
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/yoyicue/xpad2-cli/releases/download/v0.4.0/xpad2-v0.4.0-android-arm64" -OutFile "xpad2-v0.4.0-android-arm64"
-Get-FileHash .\xpad2-v0.4.0-android-arm64 -Algorithm SHA256
+Invoke-WebRequest -Uri "https://github.com/yoyicue/xpad2-cli/releases/download/v0.4.1/xpad2-v0.4.1-android-arm64" -OutFile "xpad2-v0.4.1-android-arm64"
+Get-FileHash .\xpad2-v0.4.1-android-arm64 -Algorithm SHA256
 ```
 
 正确的 SHA-256 是：
 
 ```text
-fdc17a135e6652d5b13c057ceecf1fc06a6e672291bd58c7660bfa6e65f3a8b2
+54b311a43517050b9f591a1ae3b33f41089f65d713d34b022767f4db369d11ea
 ```
 
 哈希不一致时不要继续，重新下载文件。
@@ -82,7 +82,7 @@ fdc17a135e6652d5b13c057ceecf1fc06a6e672291bd58c7660bfa6e65f3a8b2
 在下载文件所在目录执行：
 
 ```sh
-adb push xpad2-v0.4.0-android-arm64 /data/local/tmp/xpad2
+adb push xpad2-v0.4.1-android-arm64 /data/local/tmp/xpad2
 adb shell chmod 700 /data/local/tmp/xpad2
 adb shell /data/local/tmp/xpad2 version
 ```
@@ -90,7 +90,7 @@ adb shell /data/local/tmp/xpad2 version
 最后一条命令应显示：
 
 ```text
-xpad2 0.4.0 (catalog 2026-07-16.1)
+xpad2 0.4.1 (catalog 2026-07-16.2)
 ```
 
 这就表示 `xpad2` 已经安装到了：
@@ -265,8 +265,9 @@ adb shell /data/local/tmp/xpad2 logs export /sdcard/Download
 adb pull /sdcard/Download/xpad2log-20260715-120000.zip .
 ```
 
-远程求助时提供这个 ZIP。诊断导出会过滤设备序列号、ADB key、配对凭据、token、密码
-和私钥相关内容。
+远程求助时提供这个 ZIP。它包含当前完整 logcat、可取得的上一 boot、DropBox/进程退出
+信息、逐行持久化的安装输出，以及 `xpad-installer` 的 31317 阶段/PID 元数据。诊断导出
+会过滤设备序列号、ADB key、配对凭据、token、密码和私钥相关内容。
 
 ## 12. 更新 xpad2
 
@@ -290,7 +291,7 @@ adb shell /data/local/tmp/xpad2 update --offline /data/local/tmp/xpad2-update-vX
 adb shell rm /data/local/tmp/xpad2-update-vX.Y.Z.zip
 ```
 
-如果当前仍是 v0.1.x，需要先按第 3–4 节手工覆盖到当前 v0.4.0 一次；旧版本没有
+如果当前仍是 v0.1.x，需要先按第 3–4 节手工覆盖到当前 v0.4.1 一次；旧版本没有
 自更新命令。
 
 ## 常见问题
