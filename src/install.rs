@@ -98,12 +98,22 @@ pub fn ensure_installer_backup(log: &mut TransactionLog) -> Result<bool> {
         )));
     }
     let changed = output.text.contains("ZNXRUN_ENSURE result=repaired");
+    let uid = output
+        .text
+        .lines()
+        .rev()
+        .find(|line| line.contains("ZNXRUN_STATUS status=healthy"))
+        .and_then(|line| {
+            line.split_whitespace()
+                .find_map(|field| field.strip_prefix("uid="))
+        })
+        .unwrap_or("device-oem-installer");
     log.event(
         "component",
         if changed { "repaired" } else { "verified" },
-        json!({"id": "installer-backup", "transport": "0044", "uid": 10072}),
+        json!({"id": "installer-backup", "transport": "0044", "uid": uid}),
     )?;
-    println!("✓ installer-backup: 正式 anchor 与 UID 10072 已验证");
+    println!("✓ installer-backup: 正式 anchor 与本机 OEM installer UID {uid} 已验证");
     Ok(changed)
 }
 
@@ -439,7 +449,7 @@ fn install_apk_with_xpad_install(
 
 fn apk_install_plan(already_installed: bool) -> (&'static str, &'static str, &'static str) {
     if already_installed {
-        // Every target APK stays inside the persistent UID 10072/0044 identity.
+        // Every target APK stays inside the persistent, device-specific OEM/0044 identity.
         // The auto backend may switch from Provider to PackageInstaller within
         // that identity; guarded 31317 is only allowed to repair 0044 first.
         ("upgrade", "auto", "升级")

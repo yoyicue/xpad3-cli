@@ -49,30 +49,30 @@ adb -s 你的设备序列号
 ## 3. 下载并校验 xpad2
 
 当前正式版本是
-[`v0.4.2`](https://github.com/yoyicue/xpad2-cli/releases/tag/v0.4.2)。只需要下载：
+[`v0.4.3`](https://github.com/yoyicue/xpad2-cli/releases/tag/v0.4.3)。只需要下载：
 
 ```text
-xpad2-v0.4.2-android-arm64
+xpad2-v0.4.3-android-arm64
 ```
 
 macOS 或 Linux 可以直接执行：
 
 ```sh
-curl -fLO https://github.com/yoyicue/xpad2-cli/releases/download/v0.4.2/xpad2-v0.4.2-android-arm64
-shasum -a 256 xpad2-v0.4.2-android-arm64
+curl -fLO https://github.com/yoyicue/xpad2-cli/releases/download/v0.4.3/xpad2-v0.4.3-android-arm64
+shasum -a 256 xpad2-v0.4.3-android-arm64
 ```
 
 Windows PowerShell 可以执行：
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/yoyicue/xpad2-cli/releases/download/v0.4.2/xpad2-v0.4.2-android-arm64" -OutFile "xpad2-v0.4.2-android-arm64"
-Get-FileHash .\xpad2-v0.4.2-android-arm64 -Algorithm SHA256
+Invoke-WebRequest -Uri "https://github.com/yoyicue/xpad2-cli/releases/download/v0.4.3/xpad2-v0.4.3-android-arm64" -OutFile "xpad2-v0.4.3-android-arm64"
+Get-FileHash .\xpad2-v0.4.3-android-arm64 -Algorithm SHA256
 ```
 
 正确的 SHA-256 是：
 
 ```text
-007e25d79824c5b5bd37526202bcd54ebb12db7c9a6fe4b41002c608a593f258
+9f9f2e9b2d179ce4282df89808414bf5f11ee09d164f0777391bd1d0c6c7e7a2
 ```
 
 哈希不一致时不要继续，重新下载文件。
@@ -82,7 +82,7 @@ Get-FileHash .\xpad2-v0.4.2-android-arm64 -Algorithm SHA256
 在下载文件所在目录执行：
 
 ```sh
-adb push xpad2-v0.4.2-android-arm64 /data/local/tmp/xpad2
+adb push xpad2-v0.4.3-android-arm64 /data/local/tmp/xpad2
 adb shell chmod 700 /data/local/tmp/xpad2
 adb shell /data/local/tmp/xpad2 version
 ```
@@ -90,7 +90,7 @@ adb shell /data/local/tmp/xpad2 version
 最后一条命令应显示：
 
 ```text
-xpad2 0.4.2 (catalog 2026-07-16.3)
+xpad2 0.4.3 (catalog 2026-07-16.4)
 ```
 
 这就表示 `xpad2` 已经安装到了：
@@ -131,7 +131,7 @@ adb shell /data/local/tmp/xpad2 install
 3. 激活当前启动周期的 KernelSU；
 4. 安装 KernelSU Manager；
 5. 安装 `xpad-installer`；
-6. 建立并验证 UID 10072 的 `installer-backup` 备用安装路径；
+6. 建立并验证与本机 OEM installer UID 一致的 `installer-backup` 备用安装路径；
 7. 安装并激活 BoomInstaller；
 8. 恢复 SELinux Enforcing，并清理临时 Root 文件和进程。
 
@@ -226,7 +226,8 @@ adb shell /data/local/tmp/xpad2 install
 adb shell /data/local/tmp/xpad2 repair installer-backup
 ```
 
-该命令会校验或恢复正式 anchor，再独立验证 `run-as znxrun` 的 UID 为 10072。
+该命令会校验或恢复正式 anchor，再独立验证 `run-as znxrun` 的 UID 与本机
+`com.tal.pad.znxxservice` 的真实 UID 一致；不同设备可能是 10070、10072 等不同值。
 
 ## 10. 恢复系统 OTA
 
@@ -292,7 +293,7 @@ adb shell /data/local/tmp/xpad2 update --offline /data/local/tmp/xpad2-update-vX
 adb shell rm /data/local/tmp/xpad2-update-vX.Y.Z.zip
 ```
 
-如果当前仍是 v0.1.x，需要先按第 3–4 节手工覆盖到当前 v0.4.2 一次；旧版本没有
+如果当前仍是 v0.1.x，需要先按第 3–4 节手工覆盖到当前 v0.4.3 一次；旧版本没有
 自更新命令。
 
 ## 常见问题

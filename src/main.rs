@@ -137,7 +137,7 @@ fn command_list(catalog: &Catalog) {
     println!("ota              policy   freeze /260 system OTA package for user 0");
     println!("ksu              runtime  KernelSU 32547 / UAPI 2 / current boot");
     println!("suu              runtime  SukiSU Ultra 40796 / current boot");
-    println!("installer-backup policy   managed 0044 UID 10072 fallback installer");
+    println!("installer-backup policy   managed 0044 device-OEM fallback installer");
     for id in [
         "ksu-manager",
         "suu-manager",
@@ -186,7 +186,7 @@ fn command_info(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()>
     }
     if id == "installer-backup" {
         println!(
-            "id: installer-backup\nkind: policy\nidentity: znxrun / UID 10072\nanchor: com.yoyicue.xpad2.installeranchor\nlifecycle: persistent package metadata"
+            "id: installer-backup\nkind: policy\nidentity: znxrun / device OEM installer UID\nanchor: com.yoyicue.xpad2.installeranchor\nlifecycle: persistent package metadata"
         );
         render_component(&device::installer_backup_status());
         return Ok(());

@@ -668,13 +668,13 @@ mod tests {
     fn parses_managed_installer_backup_states() {
         let healthy = parse_installer_backup_status(
             true,
-            "ZNXRUN_STATUS status=healthy alias=healthy uid=10072 anchor=anchored",
+            "ZNXRUN_STATUS status=healthy alias=healthy uid=10070 expected_uid=10070 anchor=anchored",
         );
         assert_eq!(healthy.state, ComponentState::Active);
 
         let legacy = parse_installer_backup_status(
             false,
-            "ZNXRUN_STATUS status=legacy alias=healthy uid=10072 anchor=missing",
+            "ZNXRUN_STATUS status=legacy alias=healthy uid=10070 expected_uid=10070 anchor=missing",
         );
         assert_eq!(legacy.state, ComponentState::Broken);
 
@@ -695,7 +695,7 @@ mod tests {
     fn healthy_marker_requires_success_exit_status() {
         let state = parse_installer_backup_status(
             false,
-            "ZNXRUN_STATUS status=healthy alias=healthy uid=10072 anchor=anchored",
+            "ZNXRUN_STATUS status=healthy alias=healthy uid=10070 expected_uid=10070 anchor=anchored",
         );
         assert_eq!(state.state, ComponentState::Broken);
     }
@@ -709,6 +709,7 @@ mod tests {
             Ok(Some((2000, "adb-shell")))
         );
         assert!(boom_service_identity(&[1000]).is_err());
+        assert!(boom_service_identity(&[10070]).is_err());
         assert!(boom_service_identity(&[10072]).is_err());
         assert!(boom_service_identity(&[0, 2000]).is_err());
         assert!(boom_service_identity(&[2000, 2000]).is_err());
