@@ -63,7 +63,7 @@ adb shell /data/local/tmp/xpad3 cleanup
 
 相邻目录需要存在锁定上游工程和制品：
 
-- `../xpad2-ionstack-poc`，commit `3a0d27f`；
+- `../xpad2-ionstack-poc`，commit `47b201b`；
 - `../xpad2-ksu-lateload`，commit `c7bcd62`；
 - `../xpad2-reroot-android`、`../xpad-installer`、`../BoomInstaller`。
 
