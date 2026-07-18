@@ -17,20 +17,11 @@ const FULL: &[&str] = &[
     "ksu-manager",
     "boominstaller",
 ];
-const SUU_FULL: &[&str] = &[
-    "suu",
-    "xpad-installer",
-    "installer-backup",
-    "suu-manager",
-    "boominstaller",
-];
 const COMPONENT_ORDER: &[&str] = &[
     "ksu",
-    "suu",
     "xpad-installer",
     "installer-backup",
     "ksu-manager",
-    "suu-manager",
     "boominstaller",
 ];
 
@@ -54,11 +45,10 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
         device::product_check(catalog)?;
         let runtime_id = components
             .iter()
-            .find(|id| id.as_str() == "ksu" || id.as_str() == "suu")
+            .find(|id| id.as_str() == "ksu")
             .map(String::as_str);
         let early_manager = match runtime_id {
             Some("ksu") if components.iter().any(|id| id == "ksu-manager") => Some("ksu-manager"),
-            Some("suu") if components.iter().any(|id| id == "suu-manager") => Some("suu-manager"),
             _ => None,
         };
 
@@ -72,10 +62,8 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
                 "✓ ota: {}",
                 ota_status.detail.as_deref().unwrap_or("frozen")
             );
-            // Install the matching Manager after the mandatory OTA gate but
-            // before late-load. SukiSU validates and pins the official Manager
-            // identity while the module is registering; doing this first also
-            // removes a first-install race for KernelSU.
+            // Install the Manager before late-load so the module can validate
+            // and pin its official identity while registering.
             if let Some(manager) = early_manager {
                 package_manager_changed |=
                     install::install_locked_apk(catalog, paths, manager, &mut log)?;
@@ -86,6 +74,19 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
                     started_boot_id: started_boot.clone(),
                 });
             } else {
+                // PD3S needs a debuggable app-domain compat32 trigger. Never
+                // replace it while a parked trigger process survives from a
+                // previous attempt; that state requires an ordinary reboot.
+                if device::ionstack_trigger_running(catalog)? {
+                    return Err(needs_reboot(
+                        "IonStack trigger is still running without an active KernelSU module",
+                    ));
+                }
+                let trigger = device::current_root_profile(catalog)?
+                    .trigger_artifact
+                    .clone();
+                package_manager_changed |=
+                    install::install_locked_apk(catalog, paths, &trigger, &mut log)?;
                 root_session = Some(RootSession::acquire(catalog, paths, &mut log, false)?);
             }
             install::ensure_runtime(
@@ -102,7 +103,7 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
         {
             install::install_locked_cli(catalog, paths, "xpad-installer", &mut log)?;
         }
-        for manager in ["ksu-manager", "suu-manager"] {
+        for manager in ["ksu-manager"] {
             if components.iter().any(|id| id == manager) && early_manager != Some(manager) {
                 package_manager_changed |=
                     install::install_locked_apk(catalog, paths, manager, &mut log)?;
@@ -138,7 +139,7 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
             result = Err(needs_reboot("Boot ID changed before final verification"));
         } else if let Some(runtime_id) = components
             .iter()
-            .find(|id| id.as_str() == "ksu" || id.as_str() == "suu")
+            .find(|id| id.as_str() == "ksu")
             .map(String::as_str)
         {
             let ota_status = ota::status();
@@ -187,7 +188,7 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
             )));
         }
     }
-    for manager in ["ksu-manager", "suu-manager"] {
+    for manager in ["ksu-manager"] {
         if result.is_ok() && components.iter().any(|id| id == manager) {
             let state = device::apk_status(catalog.artifact(manager)?);
             if state.state != ComponentState::Installed {
@@ -259,18 +260,11 @@ fn normalize(requested: &[String]) -> Result<Vec<String>> {
     } {
         if id == "full" {
             selected.extend(FULL.iter().map(|id| id.to_string()));
-        } else if id == "suu-full" {
-            selected.extend(SUU_FULL.iter().map(|id| id.to_string()));
         } else if COMPONENT_ORDER.contains(&id.as_str()) {
             selected.insert(id.clone());
         } else {
             return Err(msg(format!("unknown built-in component: {id}")));
         }
-    }
-    if selected.contains("ksu") && selected.contains("suu") {
-        return Err(msg(
-            "ksu and suu are mutually exclusive in one boot; choose full or suu-full",
-        ));
     }
     let mut ordered = Vec::new();
     for id in COMPONENT_ORDER {
@@ -314,17 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn suu_full_selects_only_the_sukisu_runtime_and_manager() {
-        assert_eq!(
-            normalize(&["suu-full".to_string()]).expect("suu full"),
-            SUU_FULL
-        );
-    }
-
-    #[test]
-    fn runtimes_cannot_be_mixed_in_one_boot() {
-        let error =
-            normalize(&["ksu".to_string(), "suu".to_string()]).expect_err("runtime mix must fail");
-        assert!(error.to_string().contains("mutually exclusive"));
+    fn unsupported_runtime_is_rejected() {
+        assert!(normalize(&["magisk".to_string()]).is_err());
     }
 }

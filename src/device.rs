@@ -1,7 +1,7 @@
 use crate::apk;
 use crate::catalog::Catalog;
 use crate::error::{IoContext, Result, msg};
-use crate::model::{Artifact, ComponentState, ComponentStatus, DeviceStatus};
+use crate::model::{Artifact, ComponentState, ComponentStatus, DeviceStatus, IonStackProfile};
 use crate::ota;
 use crate::util::{
     Paths, boot_id, executable_exists, getprop, kernel_release, kernel_version, output_text, run,
@@ -18,53 +18,33 @@ pub struct RuntimeSpec {
     pub loader_artifact: &'static str,
     pub diagnostic_filename: &'static str,
     pub diagnostic_fallback: &'static str,
-    pub kmi: &'static str,
+    pub late_load_args: &'static [&'static str],
     pub version: u64,
     pub expected_info: &'static [&'static str],
-    pub other_version_marker: &'static str,
 }
 
 pub const KSU_RUNTIME: RuntimeSpec = RuntimeSpec {
     id: "ksu",
     display_name: "KernelSU",
     loader_artifact: "ksud",
-    diagnostic_filename: "ksud-xpad2",
-    diagnostic_fallback: "/data/local/tmp/ksud-xpad2",
-    kmi: "xpad2-4.19.191",
-    version: 32547,
+    diagnostic_filename: "ksud-xpad3",
+    diagnostic_fallback: "/data/local/tmp/ksud-xpad3s",
+    late_load_args: &["--allow-shell"],
+    version: 32551,
     expected_info: &[
-        "version: 32547",
+        "version: 32551",
         "uapi_version: 2",
-        "lkm: true",
-        "late_load: true",
-        "runtime_mode: late-load",
-    ],
-    other_version_marker: "version: 40796",
-};
-
-pub const SUU_RUNTIME: RuntimeSpec = RuntimeSpec {
-    id: "suu",
-    display_name: "SukiSU Ultra",
-    loader_artifact: "suu-ksud",
-    diagnostic_filename: "ksud-sukisu-xpad2",
-    diagnostic_fallback: "/data/local/tmp/ksud-sukisu-xpad2",
-    kmi: "xpad2-sukisu-4.19.191",
-    version: 40796,
-    expected_info: &[
-        "version: 40796",
         "flags: 0x5",
         "features: 0x5",
         "lkm: true",
         "late_load: true",
         "runtime_mode: late-load",
     ],
-    other_version_marker: "version: 32547",
 };
 
 pub fn runtime_spec(id: &str) -> Option<&'static RuntimeSpec> {
     match id {
         "ksu" => Some(&KSU_RUNTIME),
-        "suu" => Some(&SUU_RUNTIME),
         _ => None,
     }
 }
@@ -107,10 +87,6 @@ pub fn ksu_status(paths: &Paths) -> ComponentStatus {
     runtime_status(paths, &KSU_RUNTIME)
 }
 
-pub fn suu_status(paths: &Paths) -> ComponentStatus {
-    runtime_status(paths, &SUU_RUNTIME)
-}
-
 pub fn runtime_status(paths: &Paths, spec: &RuntimeSpec) -> ComponentStatus {
     if !ksu_module_loaded() {
         return status(
@@ -124,33 +100,6 @@ pub fn runtime_status(paths: &Paths, spec: &RuntimeSpec) -> ComponentStatus {
         PathBuf::from(spec.diagnostic_fallback),
     ];
     let Some(ksud) = candidates.iter().find(|p| executable_exists(p)) else {
-        let other = if spec.id == "ksu" {
-            &SUU_RUNTIME
-        } else {
-            &KSU_RUNTIME
-        };
-        let other_candidates = [
-            paths.state.join(other.diagnostic_filename),
-            PathBuf::from(other.diagnostic_fallback),
-        ];
-        if let Some(other_ksud) = other_candidates.iter().find(|p| executable_exists(p))
-            && let Some(other_text) = other_ksud.to_str()
-            && let Ok(output) = run(other_text, &["debug", "info"])
-        {
-            let text = output_text(&output);
-            if output.status.success()
-                && other
-                    .expected_info
-                    .iter()
-                    .all(|needle| text.lines().any(|line| line.trim() == *needle))
-            {
-                return status(
-                    spec.id,
-                    ComponentState::Ready,
-                    Some("another supported runtime is active; ordinary reboot before switching"),
-                );
-            }
-        }
         return status(
             spec.id,
             ComponentState::Broken,
@@ -184,15 +133,6 @@ pub fn runtime_status(paths: &Paths, spec: &RuntimeSpec) -> ComponentStatus {
                         spec.display_name, spec.version
                     )),
                 )
-            } else if text
-                .lines()
-                .any(|line| line.trim() == spec.other_version_marker)
-            {
-                status(
-                    spec.id,
-                    ComponentState::Ready,
-                    Some("another supported runtime is active; ordinary reboot before switching"),
-                )
             } else {
                 status(
                     spec.id,
@@ -219,6 +159,18 @@ pub fn ksu_module_loaded() -> bool {
     let modules = fs::read_to_string("/proc/modules").unwrap_or_default();
     modules.lines().any(|line| line.starts_with("kernelsu "))
         || Path::new("/sys/module/kernelsu").exists()
+}
+
+pub fn ionstack_trigger_running(catalog: &Catalog) -> Result<bool> {
+    let profile = current_root_profile(catalog)?;
+    let package = catalog
+        .artifact(&profile.trigger_artifact)?
+        .package
+        .as_deref()
+        .ok_or_else(|| msg("IonStack trigger artifact has no package identity"))?;
+    Ok(run("/system/bin/pidof", &[package])
+        .map(|output| output.status.success() && !output_text(&output).is_empty())
+        .unwrap_or(false))
 }
 
 pub fn cli_status(artifact: &Artifact) -> ComponentStatus {
@@ -752,15 +704,23 @@ pub fn snapshot(catalog: &Catalog, paths: &Paths) -> DeviceStatus {
     let product_supported = catalog.lock.matches_product_device(&fingerprint, &abi);
     let supported = catalog
         .lock
-        .matches_technical_runtime(&fingerprint, &kernel, &abi);
+        .ionstack_artifacts(&fingerprint, &kernel, &version, &abi)
+        .is_some();
     let mut components = Vec::new();
     components.push(ota::status());
     components.push(ksu_status(paths));
-    components.push(suu_status(paths));
-    if let Ok(artifact) = catalog.artifact("ksu-manager") {
-        components.push(apk_status(artifact));
+    for profile in &catalog.lock.ionstack_profiles {
+        if components
+            .iter()
+            .any(|component| component.id == profile.trigger_artifact)
+        {
+            continue;
+        }
+        if let Ok(artifact) = catalog.artifact(&profile.trigger_artifact) {
+            components.push(apk_status(artifact));
+        }
     }
-    if let Ok(artifact) = catalog.artifact("suu-manager") {
+    if let Ok(artifact) = catalog.artifact("ksu-manager") {
         components.push(apk_status(artifact));
     }
     if let Ok(artifact) = catalog.artifact("xpad-installer") {
@@ -801,51 +761,51 @@ pub fn snapshot(catalog: &Catalog, paths: &Paths) -> DeviceStatus {
 pub fn product_check(catalog: &Catalog) -> crate::error::Result<()> {
     let fingerprint = getprop("ro.build.fingerprint");
     let abi = getprop("ro.product.cpu.abi");
-    let policy = catalog.lock.profile.fingerprint_policy();
-    policy.validate()?;
-    if !policy.matches_product_family(&fingerprint) {
+    if !catalog.lock.matches_product_device(&fingerprint, &abi) {
         return Err(crate::error::msg(format!(
-            "unsupported XPad2 product fingerprint: expected canonical numeric incremental within {}…{}, got {}",
-            catalog.lock.profile.build_fingerprint_prefix,
-            catalog.lock.profile.build_fingerprint_suffix,
-            fingerprint
-        )));
-    }
-    if abi != catalog.lock.profile.abi {
-        return Err(crate::error::msg(format!(
-            "unsupported ABI: expected {}, got {}",
-            catalog.lock.profile.abi, abi
+            "unsupported XPad3 device profile: fingerprint={fingerprint:?} abi={abi:?}"
         )));
     }
     Ok(())
 }
 
 pub fn root_profile_check(catalog: &Catalog) -> crate::error::Result<()> {
+    current_root_profile(catalog).map(|_| ())
+}
+
+pub fn current_root_profile(catalog: &Catalog) -> crate::error::Result<&IonStackProfile> {
     let fingerprint = getprop("ro.build.fingerprint");
     let kernel = kernel_release();
+    let version = kernel_version();
     let abi = getprop("ro.product.cpu.abi");
-    let policy = catalog.lock.profile.fingerprint_policy();
-    policy.validate()?;
-    if !policy.matches(&fingerprint) {
+    if let Some(profile) =
+        catalog
+            .lock
+            .selected_ionstack_profile(&fingerprint, &kernel, &version, &abi)
+    {
+        return Ok(profile);
+    }
+    if !catalog.lock.matches_product_device(&fingerprint, &abi) {
         return Err(crate::error::msg(format!(
-            "unsupported firmware fingerprint: expected {}, got {}",
-            policy.expectation(),
-            fingerprint
+            "unsupported XPad3 device profile: fingerprint={fingerprint:?} abi={abi:?}"
         )));
     }
-    if !kernel.starts_with(&catalog.lock.profile.kernel_release_prefix) {
-        return Err(crate::error::msg(format!(
-            "unsupported kernel: expected {}*, got {}",
-            catalog.lock.profile.kernel_release_prefix, kernel
-        )));
-    }
-    if abi != catalog.lock.profile.abi {
-        return Err(crate::error::msg(format!(
-            "unsupported ABI: expected {}, got {}",
-            catalog.lock.profile.abi, abi
-        )));
-    }
-    Ok(())
+    let expected = catalog
+        .lock
+        .ionstack_profiles
+        .iter()
+        .filter(|profile| profile.build_fingerprint == fingerprint && profile.abi == abi)
+        .map(|profile| {
+            format!(
+                "{}: kernel={}* build={:?}",
+                profile.id, profile.kernel_release_prefix, profile.kernel_version
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(crate::error::msg(format!(
+        "unsupported kernel identity for this XPad3 device: got release={kernel:?} build={version:?}; expected {expected}"
+    )))
 }
 
 pub fn component<'a>(snapshot: &'a DeviceStatus, id: &str) -> Option<&'a ComponentStatus> {
@@ -954,7 +914,7 @@ mod tests {
         let locked = catalog.artifact("xpad-installer").unwrap();
         let mut artifact = locked.clone();
         let root = std::env::temp_dir().join(format!(
-            "xpad2-device-integrity-{}",
+            "xpad3-device-integrity-{}",
             crate::util::unique_id()
         ));
         fs::create_dir_all(&root).unwrap();

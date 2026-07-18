@@ -17,9 +17,8 @@ pub struct AssetsLock {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceProfile {
-    // Compatibility anchor consumed by pre-range updaters. It remains the
-    // exact upper-bound /260 fingerprint even when the signed catalog also
-    // carries the canonical incremental range below.
+    // Compatibility anchor consumed by the schema-1 update manifest. Runtime
+    // selection uses the independently locked ionstack_profiles below.
     pub build_fingerprint: String,
     #[serde(default)]
     pub build_fingerprint_prefix: String,
@@ -39,11 +38,16 @@ pub struct DeviceProfile {
 #[serde(deny_unknown_fields)]
 pub struct IonStackProfile {
     pub id: String,
+    pub build_fingerprint: String,
+    pub kernel_release_prefix: String,
     pub kernel_version: String,
+    pub abi: String,
     pub runner_artifact: String,
     pub perf_target_artifact: String,
     pub preload_artifact: String,
     pub chainwalk_probe_artifact: String,
+    pub trigger_artifact: String,
+    pub ksu_kmi: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -120,7 +124,7 @@ pub struct DeviceStatus {
     pub product_version: String,
     pub product_supported: bool,
     // Backward-compatible field: this continues to mean that the IonStack
-    // Root technical profile is supported, not merely that this is an XPad2.
+    // Root technical profile is supported, not merely that this is an XPad3.
     pub supported: bool,
     pub fingerprint: String,
     pub fingerprint_incremental: Option<u32>,

@@ -1,10 +1,10 @@
 [package]
-name = "xpad2"
-version = "0.5.2"
+name = "xpad3"
+version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
-description = "Root-capable signed installer and self-updater for XPad2 /19-/260"
-repository = "https://github.com/yoyicue/xpad2-cli"
+description = "Profile-gated root installer for the modern-kernel XPad3 family"
+repository = "https://github.com/yoyicue/xpad3-cli"
 build = "build.rs"
 
 [dependencies]

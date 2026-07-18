@@ -189,11 +189,12 @@ pub fn ensure_runtime(
     let path = diagnostic
         .to_str()
         .ok_or_else(|| msg("invalid runtime diagnostic path"))?;
-    let command = format!(
-        "{} late-load --kmi {}",
-        shell_quote(path),
-        shell_quote(spec.kmi)
-    );
+    let kmi = device::current_root_profile(catalog)?.ksu_kmi.as_str();
+    let mut command = format!("{} late-load --kmi {}", shell_quote(path), shell_quote(kmi));
+    for argument in spec.late_load_args {
+        command.push(' ');
+        command.push_str(&shell_quote(argument));
+    }
     log.event(
         "component",
         "running",
@@ -288,7 +289,7 @@ pub fn install_locked_apk(
     }
     if current.state == ComponentState::Incompatible {
         return Err(msg(format!(
-            "{id} has an incompatible installed identity; xpad2 will not uninstall it or erase app data: {}",
+            "{id} has an incompatible installed identity; xpad3 will not uninstall it or erase app data: {}",
             current.detail.unwrap_or_default()
         )));
     }
@@ -363,7 +364,7 @@ pub fn install_arbitrary_apk(
     }
     device::verify_locked_cli_path(xpad_installer).map_err(|error| {
         msg(format!(
-            "xpad-install is missing or unverified; run `xpad2 install xpad-installer`: {error}"
+            "xpad-install is missing or unverified; run `xpad3 install xpad-installer`: {error}"
         ))
     })?;
     install_apk_with_xpad_install(path, &identity, xpad_installer, log)?;
@@ -431,7 +432,7 @@ fn install_apk_with_xpad_install(
     let already_installed = device::installed_apk_identity(&identity.package)?.is_some();
     let (verb, backend, action) = apk_install_plan(already_installed);
     println!(
-        "{action} {}：只通过受管 0044；若需修复安装身份，提交后会只读检测最多约 5 分钟。若返回 pending，请等待后运行 xpad2 status，不要重复安装。",
+        "{action} {}：只通过受管 0044；若需修复安装身份，提交后会只读检测最多约 5 分钟。若返回 pending，请等待后运行 xpad3 status，不要重复安装。",
         identity.package,
     );
     log.event(
@@ -560,7 +561,7 @@ fn classify_installer_error(
     let lower = text.to_ascii_lowercase();
     if exit_code == Some(76) {
         msg(format!(
-            "{context}: installer identity repair was committed but Android is still refreshing; the target APK was not installed. Wait, then run `xpad2 status` to recheck. Do not repeat install or run ensure/31317 while status is pending"
+            "{context}: installer identity repair was committed but Android is still refreshing; the target APK was not installed. Wait, then run `xpad3 status` to recheck. Do not repeat install or run ensure/31317 while status is pending"
         ))
     } else if exit_code == Some(75) {
         needs_reboot(format!(
@@ -624,7 +625,7 @@ mod tests {
     fn installer_exit_76_is_pending_not_reboot() {
         let error = classify_installer_error("test", Some(76), "repair_committed=true");
         assert!(!error.requires_reboot());
-        assert!(error.to_string().contains("xpad2 status"));
+        assert!(error.to_string().contains("xpad3 status"));
         assert!(error.to_string().contains("Do not repeat install"));
     }
 }

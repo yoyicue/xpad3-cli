@@ -24,17 +24,17 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use zip::ZipArchive;
 
 const UPDATE_SCHEMA: u32 = 1;
-const UPDATE_KIND: &str = "xpad2-update";
+const UPDATE_KIND: &str = "xpad3-update";
 const UPDATE_CHANNEL: &str = "stable";
-const UPDATE_REPOSITORY: &str = "https://github.com/yoyicue/xpad2-cli";
-const GITHUB_API_REPOSITORY: &str = "https://api.github.com/repos/yoyicue/xpad2-cli";
-const MANIFEST_FILENAME: &str = "xpad2-update.json";
-const SIGNATURE_FILENAME: &str = "xpad2-update.json.sig";
+const UPDATE_REPOSITORY: &str = "https://github.com/yoyicue/xpad3-cli";
+const GITHUB_API_REPOSITORY: &str = "https://api.github.com/repos/yoyicue/xpad3-cli";
+const MANIFEST_FILENAME: &str = "xpad3-update.json";
+const SIGNATURE_FILENAME: &str = "xpad3-update.json.sig";
 const CATALOG_SIGNATURE_FILENAME: &str = "catalog.sig";
-const DELTA_INDEX_FILENAME: &str = "xpad2-deltas.json";
-const DELTA_SIGNATURE_FILENAME: &str = "xpad2-deltas.json.sig";
+const DELTA_INDEX_FILENAME: &str = "xpad3-deltas.json";
+const DELTA_SIGNATURE_FILENAME: &str = "xpad3-deltas.json.sig";
 const DELTA_SCHEMA: u32 = 1;
-const DELTA_KIND: &str = "xpad2-deltas";
+const DELTA_KIND: &str = "xpad3-deltas";
 const MAX_MANIFEST_SIZE: usize = 256 * 1024;
 const MAX_SIGNATURE_SIZE: usize = 64 * 1024;
 const MAX_RELEASE_METADATA_SIZE: usize = 2 * 1024 * 1024;
@@ -259,7 +259,7 @@ impl BinarySwap {
         let actual = sha256_file(&self.target)?;
         if actual != self.expected_sha256 {
             return Err(msg(format!(
-                "rolled-back xpad2 identity mismatch: expected {}, got {actual}",
+                "rolled-back xpad3 identity mismatch: expected {}, got {actual}",
                 self.expected_sha256
             )));
         }
@@ -375,11 +375,11 @@ pub fn check(catalog: &Catalog, paths: &Paths, request: &UpdateRequest) -> Resul
     } else {
         match state {
             VersionState::Available => println!(
-                "可更新：xpad2 {} -> {}（catalog {}）\n{}",
+                "可更新：xpad3 {} -> {}（catalog {}）\n{}",
                 current, target, verified.manifest.catalog_version, verified.manifest.release_url
             ),
             VersionState::Current => println!(
-                "已是当前稳定版：xpad2 {}（catalog {}）",
+                "已是当前稳定版：xpad3 {}（catalog {}）",
                 current, verified.manifest.catalog_version
             ),
             VersionState::Ahead => {
@@ -398,7 +398,7 @@ pub fn apply(
 ) -> Result<bool> {
     if paths.cache_is_explicit {
         return Err(msg(
-            "self-update refuses --cache-dir/XPAD2_CACHE_DIR; use the managed versioned cache",
+            "self-update refuses --cache-dir/XPAD3_CACHE_DIR; use the managed versioned cache",
         ));
     }
     device::product_check(catalog)?;
@@ -411,7 +411,7 @@ pub fn apply(
 
     match state {
         VersionState::Current if !request.reinstall => {
-            println!("xpad2 {current} 已是所选版本，无需更新");
+            println!("xpad3 {current} 已是所选版本，无需更新");
             return Ok(false);
         }
         VersionState::Ahead if !request.allow_downgrade => {
@@ -436,7 +436,7 @@ pub fn apply(
         }),
     )?;
     println!(
-        "准备更新 xpad2 {} -> {}；下载、签名校验、内嵌缓存导出和候选自检通常需要 1–3 分钟…",
+        "准备更新 xpad3 {} -> {}；下载、签名校验、内嵌缓存导出和候选自检通常需要 1–3 分钟…",
         current, target
     );
 
@@ -475,7 +475,7 @@ pub fn apply(
         )?;
         let unpacked = workspace.path.join("cache-unpacked");
         extract_zip_safely(&cache_archive, &unpacked, MAX_EXTRACTED_SIZE)?;
-        let cache_source = locate_named_root(&unpacked, "xpad2-cache")?;
+        let cache_source = locate_named_root(&unpacked, "xpad3-cache")?;
         let target_lock = verify_cache_against_manifest(&cache_source, &verified.manifest, None)?;
         verify_candidate(
             &candidate,
@@ -580,7 +580,7 @@ pub fn apply(
     }
     log.event("self-update", "installed", record)?;
     println!(
-        "更新完成：xpad2 {}（catalog {}）；旧 ELF 已保留用于失败恢复",
+        "更新完成：xpad3 {}（catalog {}）；旧 ELF 已保留用于失败恢复",
         target, verified.manifest.catalog_version
     );
     Ok(true)
@@ -630,7 +630,7 @@ pub fn verify_candidate_command(catalog: &Catalog, args: &[String]) -> Result<()
         .filter(|artifact| artifact.embedded)
         .count();
     println!(
-        "XPAD2_UPDATE_CANDIDATE_OK version={} catalog={} blobs={}",
+        "XPAD3_UPDATE_CANDIDATE_OK version={} catalog={} blobs={}",
         manifest.version, manifest.catalog_version, verified
     );
     Ok(())
@@ -654,14 +654,14 @@ pub fn export_candidate_cache_command(catalog: &Catalog, args: &[String]) -> Res
     let exported =
         catalog::export_embedded_cache(catalog, &catalog_signature, Path::new(&args[3]))?;
     println!(
-        "XPAD2_UPDATE_CACHE_EXPORT_OK version={} catalog={} blobs={}",
+        "XPAD3_UPDATE_CACHE_EXPORT_OK version={} catalog={} blobs={}",
         manifest.version, manifest.catalog_version, exported
     );
     Ok(())
 }
 
 pub fn update_usage() -> &'static str {
-    "usage: xpad2 update [--check] [--json] [--version VERSION] [--offline DIRECTORY_OR_ZIP] [--reinstall] [--allow-downgrade] [--manifest-url HTTPS_URL]"
+    "usage: xpad3 update [--check] [--json] [--version VERSION] [--offline DIRECTORY_OR_ZIP] [--reinstall] [--allow-downgrade] [--manifest-url HTTPS_URL]"
 }
 
 fn acquire_manifest(request: &UpdateRequest, workspace: &Workspace) -> Result<VerifiedManifest> {
@@ -764,7 +764,7 @@ fn configured_manifest_url(request: &UpdateRequest) -> Option<String> {
         return Some(url.clone());
     }
     if request.version.is_none()
-        && let Some(url) = std::env::var_os("XPAD2_UPDATE_MANIFEST_URL")
+        && let Some(url) = std::env::var_os("XPAD3_UPDATE_MANIFEST_URL")
     {
         return Some(url.to_string_lossy().into_owned());
     }
@@ -881,7 +881,7 @@ fn prepare_offline_root(source: &Path, workspace: &Path) -> Result<PathBuf> {
     } else if metadata.is_file() {
         let extracted = workspace.join("offline-bundle");
         extract_zip_safely(source, &extracted, MAX_EXTRACTED_SIZE)?;
-        locate_named_root(&extracted, "xpad2-update")?
+        locate_named_root(&extracted, "xpad3-update")?
     } else {
         return Err(msg(format!(
             "offline update source is neither a directory nor a ZIP: {}",
@@ -891,7 +891,7 @@ fn prepare_offline_root(source: &Path, workspace: &Path) -> Result<PathBuf> {
     if root.join(MANIFEST_FILENAME).is_file() && root.join(SIGNATURE_FILENAME).is_file() {
         return Ok(root);
     }
-    let nested = root.join("xpad2-update");
+    let nested = root.join("xpad3-update");
     if nested.join(MANIFEST_FILENAME).is_file() && nested.join(SIGNATURE_FILENAME).is_file() {
         return Ok(nested);
     }
@@ -907,7 +907,7 @@ fn validate_manifest(manifest: &UpdateManifest) -> Result<()> {
         || manifest.repository != UPDATE_REPOSITORY
     {
         return Err(msg(
-            "unsupported or untrusted xpad2 update manifest identity",
+            "unsupported or untrusted xpad3 update manifest identity",
         ));
     }
     let version = parse_canonical_version(&manifest.version)?;
@@ -916,8 +916,8 @@ fn validate_manifest(manifest: &UpdateManifest) -> Result<()> {
             "stable update manifest must use a release semantic version",
         ));
     }
-    let expected_binary = format!("xpad2-v{}-android-arm64", manifest.version);
-    let expected_cache = format!("xpad2-cache-v{}.zip", manifest.version);
+    let expected_binary = format!("xpad3-v{}-android-arm64", manifest.version);
+    let expected_cache = format!("xpad3-cache-v{}.zip", manifest.version);
     if manifest.binary.filename != expected_binary || manifest.cache.filename != expected_cache {
         return Err(msg("update asset filenames do not match manifest version"));
     }
@@ -969,7 +969,7 @@ fn validate_target_profile(manifest: &UpdateManifest, catalog: &Catalog) -> Resu
     let abi = getprop("ro.product.cpu.abi");
     if !catalog.lock.matches_product_device(&fingerprint, &abi) {
         return Err(msg(
-            "current device does not match the signed XPad2 product family",
+            "current device does not match the signed XPad3 product family",
         ));
     }
     Ok(())
@@ -1025,7 +1025,7 @@ fn validate_https_url(value: &str, name: &str) -> Result<()> {
 
 fn http_agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
-        .user_agent(&format!("xpad2/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(&format!("xpad3/{}", env!("CARGO_PKG_VERSION")))
         .timeout_connect(Duration::from_secs(30))
         .timeout_read(Duration::from_secs(120))
         .timeout_write(Duration::from_secs(120))
@@ -1334,7 +1334,7 @@ fn validate_delta_index(index: &DeltaIndex, manifest: &UpdateManifest) -> Result
         validate_sha256(&entry.from_sha256, "delta base SHA-256")?;
         validate_asset(&entry.patch, MAX_DELTA_SIZE, "delta patch")?;
         let expected_filename = format!(
-            "xpad2-delta-v{}-to-v{}-android-arm64.zst",
+            "xpad3-delta-v{}-to-v{}-android-arm64.zst",
             entry.from_version, manifest.version
         );
         let expected_url = format!(
@@ -1390,7 +1390,7 @@ fn acquire_candidate_binary(
                     verified.github_release.as_ref(),
                     workspace,
                     0o600,
-                    "xpad2 delta",
+                    "xpad3 delta",
                 )?;
                 let candidate = workspace.join(&verified.manifest.binary.filename);
                 reconstruct_candidate_from_delta(
@@ -1455,7 +1455,7 @@ fn acquire_candidate_binary(
         verified.github_release.as_ref(),
         workspace,
         0o700,
-        "xpad2 ELF",
+        "xpad3 ELF",
     )?;
     Ok(CandidateAcquisition {
         path: candidate,
@@ -1931,7 +1931,7 @@ fn verify_candidate(
         .arg(manifest)
         .arg(signature)
         .arg(cache)
-        .env_remove("XPAD2_CACHE_DIR")
+        .env_remove("XPAD3_CACHE_DIR")
         .stdin(Stdio::null())
         .output()
         .map_err(|error| msg(format!("failed to execute candidate self-check: {error}")))?;
@@ -1944,7 +1944,7 @@ fn verify_candidate(
         text.push_str(stderr.trim());
     }
     log.command_result("candidate-self-check", output.status.success(), &text)?;
-    if !output.status.success() || !text.contains("XPAD2_UPDATE_CANDIDATE_OK") {
+    if !output.status.success() || !text.contains("XPAD3_UPDATE_CANDIDATE_OK") {
         return Err(msg(format!("candidate self-check failed: {text}")));
     }
     Ok(())
@@ -1964,7 +1964,7 @@ fn export_candidate_cache(
         .arg(signature)
         .arg(catalog_signature)
         .arg(destination)
-        .env_remove("XPAD2_CACHE_DIR")
+        .env_remove("XPAD3_CACHE_DIR")
         .stdin(Stdio::null())
         .output()
         .map_err(|error| msg(format!("failed to execute candidate cache export: {error}")))?;
@@ -1977,7 +1977,7 @@ fn export_candidate_cache(
         text.push_str(stderr.trim());
     }
     log.command_result("candidate-cache-export", output.status.success(), &text)?;
-    if !output.status.success() || !text.contains("XPAD2_UPDATE_CACHE_EXPORT_OK") {
+    if !output.status.success() || !text.contains("XPAD3_UPDATE_CACHE_EXPORT_OK") {
         return Err(msg(format!("candidate cache export failed: {text}")));
     }
     Ok(())
@@ -2044,13 +2044,13 @@ fn install_candidate_binary(
     paths: &Paths,
 ) -> Result<BinarySwap> {
     let target = std::env::current_exe()
-        .map_err(|error| msg(format!("cannot resolve current xpad2 executable: {error}")))?;
+        .map_err(|error| msg(format!("cannot resolve current xpad3 executable: {error}")))?;
     verify_regular_file(&target)?;
     let current_sha = sha256_file(&target)?;
     let backup_dir = paths.state.join("update-backups");
     fs::create_dir_all(&backup_dir).at(&backup_dir)?;
     fs::set_permissions(&backup_dir, fs::Permissions::from_mode(0o700)).at(&backup_dir)?;
-    let backup = backup_dir.join(format!("xpad2-v{}-{}", current, &current_sha[..12]));
+    let backup = backup_dir.join(format!("xpad3-v{}-{}", current, &current_sha[..12]));
     if !backup.exists() {
         copy_atomic(&target, &backup, 0o700)?;
     }
@@ -2059,11 +2059,11 @@ fn install_candidate_binary(
     }
     let target_parent = target
         .parent()
-        .ok_or_else(|| msg("current xpad2 executable has no parent directory"))?;
+        .ok_or_else(|| msg("current xpad3 executable has no parent directory"))?;
     let target_name = target
         .file_name()
         .and_then(OsStr::to_str)
-        .unwrap_or("xpad2");
+        .unwrap_or("xpad3");
     let rollback_staged = target_parent.join(format!(".{target_name}.{}.rollback", unique_id()));
     copy_atomic(&backup, &rollback_staged, 0o700)?;
     let swap = BinarySwap {
@@ -2091,9 +2091,9 @@ fn install_candidate_binary(
         };
         let rollback = swap.rollback();
         return Err(match rollback {
-            Ok(()) => msg(format!("installed xpad2 ELF {identity_error}")),
+            Ok(()) => msg(format!("installed xpad3 ELF {identity_error}")),
             Err(rollback_error) => msg(format!(
-                "installed xpad2 ELF {identity_error}; rollback also failed: {rollback_error}"
+                "installed xpad3 ELF {identity_error}; rollback also failed: {rollback_error}"
             )),
         });
     }
@@ -2113,7 +2113,7 @@ fn prune_binary_backups(paths: &Paths, keep: usize, protected: &Path) -> Result<
                 .file_type()
                 .map(|kind| kind.is_file())
                 .unwrap_or(false)
-                && entry.file_name().to_string_lossy().starts_with("xpad2-v")
+                && entry.file_name().to_string_lossy().starts_with("xpad3-v")
         })
         .collect::<Vec<_>>();
     entries.sort_by_key(|entry| {
@@ -2262,7 +2262,7 @@ mod tests {
     use zip::write::SimpleFileOptions;
 
     fn test_dir(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("xpad2-update-{label}-{}", unique_id()))
+        std::env::temp_dir().join(format!("xpad3-update-{label}-{}", unique_id()))
     }
 
     fn manifest() -> UpdateManifest {
@@ -2279,14 +2279,14 @@ mod tests {
                 abi: "arm64-v8a".to_string(),
             },
             binary: UpdateAsset {
-                filename: "xpad2-v0.2.0-android-arm64".to_string(),
-                url: "https://github.com/yoyicue/xpad2-cli/releases/download/v0.2.0/xpad2-v0.2.0-android-arm64".to_string(),
+                filename: "xpad3-v0.2.0-android-arm64".to_string(),
+                url: "https://github.com/yoyicue/xpad3-cli/releases/download/v0.2.0/xpad3-v0.2.0-android-arm64".to_string(),
                 size: 1,
                 sha256: "a".repeat(64),
             },
             cache: UpdateAsset {
-                filename: "xpad2-cache-v0.2.0.zip".to_string(),
-                url: "https://github.com/yoyicue/xpad2-cli/releases/download/v0.2.0/xpad2-cache-v0.2.0.zip".to_string(),
+                filename: "xpad3-cache-v0.2.0.zip".to_string(),
+                url: "https://github.com/yoyicue/xpad3-cli/releases/download/v0.2.0/xpad3-cache-v0.2.0.zip".to_string(),
                 size: 1,
                 sha256: "b".repeat(64),
             },
@@ -2295,7 +2295,7 @@ mod tests {
                 size: 1,
                 sha256: "c".repeat(64),
             },
-            release_url: "https://github.com/yoyicue/xpad2-cli/releases/tag/v0.2.0".to_string(),
+            release_url: "https://github.com/yoyicue/xpad3-cli/releases/tag/v0.2.0".to_string(),
         }
     }
 
@@ -2318,27 +2318,27 @@ mod tests {
     fn github_release() -> GitHubRelease {
         let asset = |name: &str, size: u64, digest: Option<String>, id: u64| GitHubAsset {
             name: name.to_string(),
-            url: format!("https://api.github.com/repos/yoyicue/xpad2-cli/releases/assets/{id}"),
+            url: format!("https://api.github.com/repos/yoyicue/xpad3-cli/releases/assets/{id}"),
             size,
             state: "uploaded".to_string(),
             digest,
         };
         GitHubRelease {
             tag_name: "v0.2.0".to_string(),
-            html_url: "https://github.com/yoyicue/xpad2-cli/releases/tag/v0.2.0".to_string(),
+            html_url: "https://github.com/yoyicue/xpad3-cli/releases/tag/v0.2.0".to_string(),
             draft: false,
             prerelease: false,
             assets: vec![
                 asset(MANIFEST_FILENAME, 1024, None, 1),
                 asset(SIGNATURE_FILENAME, 512, None, 2),
                 asset(
-                    "xpad2-v0.2.0-android-arm64",
+                    "xpad3-v0.2.0-android-arm64",
                     1,
                     Some(format!("sha256:{}", "a".repeat(64))),
                     3,
                 ),
                 asset(
-                    "xpad2-cache-v0.2.0.zip",
+                    "xpad3-cache-v0.2.0.zip",
                     1,
                     Some(format!("sha256:{}", "b".repeat(64))),
                     4,
@@ -2355,7 +2355,7 @@ mod tests {
     fn delta_index_for(manifest: &UpdateManifest) -> DeltaIndex {
         let from_version = "0.1.9";
         let filename = format!(
-            "xpad2-delta-v{from_version}-to-v{}-android-arm64.zst",
+            "xpad3-delta-v{from_version}-to-v{}-android-arm64.zst",
             manifest.version
         );
         DeltaIndex {
@@ -2522,7 +2522,7 @@ mod tests {
     #[test]
     fn manifest_rejects_unsafe_or_mismatched_assets() {
         let mut value = manifest();
-        value.binary.filename = "../xpad2".to_string();
+        value.binary.filename = "../xpad3".to_string();
         assert!(validate_manifest(&value).is_err());
         let mut value = manifest();
         value.cache.url = "http://example.invalid/cache.zip".to_string();
@@ -2566,7 +2566,7 @@ mod tests {
 
         let mut wrong_host = github_release();
         wrong_host.assets[0].url =
-            "https://example.invalid/repos/yoyicue/xpad2-cli/releases/assets/1".to_string();
+            "https://example.invalid/repos/yoyicue/xpad3-cli/releases/assets/1".to_string();
         assert!(github_asset(&wrong_host, MANIFEST_FILENAME).is_err());
 
         let mut wrong_digest = github_release();
@@ -2609,9 +2609,9 @@ mod tests {
     fn rollback_primitives_restore_the_previous_binary_and_cache() {
         let root = test_dir("rollback");
         fs::create_dir_all(&root).unwrap();
-        let binary = root.join("xpad2");
-        let backup = root.join("xpad2.backup");
-        let rollback_staged = root.join(".xpad2.rollback");
+        let binary = root.join("xpad3");
+        let backup = root.join("xpad3.backup");
+        let rollback_staged = root.join(".xpad3.rollback");
         atomic_write(&binary, b"new", 0o700).unwrap();
         atomic_write(&backup, b"old", 0o700).unwrap();
         atomic_write(&rollback_staged, b"old", 0o700).unwrap();
@@ -2659,12 +2659,12 @@ mod tests {
         paths.ensure().unwrap();
         let backup_dir = paths.state.join("update-backups");
         fs::create_dir_all(&backup_dir).unwrap();
-        let protected = backup_dir.join("xpad2-v0.4.1-protected");
+        let protected = backup_dir.join("xpad3-v0.4.1-protected");
         for name in [
-            "xpad2-v0.4.1-protected",
-            "xpad2-v0.4.2-old",
-            "xpad2-v0.4.3-old",
-            "xpad2-v0.4.4-new",
+            "xpad3-v0.4.1-protected",
+            "xpad3-v0.4.2-old",
+            "xpad3-v0.4.3-old",
+            "xpad3-v0.4.4-new",
         ] {
             fs::write(backup_dir.join(name), name.as_bytes()).unwrap();
         }

@@ -14,7 +14,7 @@ mod update;
 mod util;
 
 use crate::catalog::Catalog;
-use crate::error::{Error, Result, msg};
+use crate::error::{Error, Result, msg, needs_reboot};
 use crate::logging::TransactionLog;
 use crate::model::{ComponentState, Receipt};
 use crate::util::{OperationLock, Paths, boot_id, selinux};
@@ -25,7 +25,7 @@ fn main() {
     match run_main() {
         Ok(()) => {}
         Err(error) => {
-            eprintln!("xpad2: {error}");
+            eprintln!("xpad3: {error}");
             std::process::exit(if error.requires_reboot() { 75 } else { 1 });
         }
     }
@@ -47,7 +47,7 @@ fn run_main() -> Result<()> {
         "help" | "-h" | "--help" => print_help(),
         "version" | "--version" | "-V" => {
             println!(
-                "xpad2 {} (catalog {})",
+                "xpad3 {} (catalog {})",
                 env!("CARGO_PKG_VERSION"),
                 catalog.lock.catalog_version
             );
@@ -68,7 +68,7 @@ fn run_main() -> Result<()> {
         "update" => command_update(&catalog, &paths, &args[1..])?,
         "_update-verify-candidate" => update::verify_candidate_command(&catalog, &args[1..])?,
         "_update-export-cache" => update::export_candidate_cache_command(&catalog, &args[1..])?,
-        other => return Err(msg(format!("unknown command: {other}; run `xpad2 help`"))),
+        other => return Err(msg(format!("unknown command: {other}; run `xpad3 help`"))),
     }
     Ok(())
 }
@@ -108,14 +108,14 @@ fn parse_global_options(args: Vec<String>) -> Result<(Vec<String>, Option<PathBu
 
 fn command_status(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
     if args.len() > 1 || args.first().is_some_and(|arg| arg != "--json") {
-        return Err(msg("usage: xpad2 status [--json]"));
+        return Err(msg("usage: xpad3 status [--json]"));
     }
     let status = device::snapshot(catalog, paths);
     if args.first().is_some_and(|arg| arg == "--json") {
         println!("{}", serde_json::to_string_pretty(&status)?);
     } else {
         println!(
-            "xpad2 {}  XPad2设备族={}  IonStack-Root范围={}  SELinux={}",
+            "xpad3 {}  XPad3现代内核设备={}  精确Root-profile={}  SELinux={}",
             status.product_version,
             yes_no(status.product_supported),
             yes_no(status.supported),
@@ -146,16 +146,11 @@ fn command_status(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<(
 }
 
 fn command_list(catalog: &Catalog) {
-    println!("ota              policy   freeze supported XPad2 system OTA package for user 0");
-    println!("ksu              runtime  KernelSU 32547 / UAPI 2 / current boot");
-    println!("suu              runtime  SukiSU Ultra 40796 / current boot");
+    println!("ota              policy   freeze supported XPad3 system OTA package for user 0");
+    println!("ksu              runtime  KernelSU 32551 / UAPI 2 / android12-5.10 / current boot");
+    println!("ionstack-trigger internal profile-managed trigger; never installed standalone");
     println!("installer-backup policy   managed 0044 device-OEM fallback installer");
-    for id in [
-        "ksu-manager",
-        "suu-manager",
-        "xpad-installer",
-        "boominstaller",
-    ] {
+    for id in ["ksu-manager", "xpad-installer", "boominstaller"] {
         if let Ok(a) = catalog.artifact(id) {
             println!(
                 "{:<16} {:<8} {}",
@@ -166,17 +161,16 @@ fn command_list(catalog: &Catalog) {
         }
     }
     println!("full             bundle   default: ksu + matching Manager + installers");
-    println!("suu-full         bundle   suu + matching Manager + installers");
 }
 
 fn command_info(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
     if args.len() != 1 {
-        return Err(msg("usage: xpad2 info COMPONENT"));
+        return Err(msg("usage: xpad3 info COMPONENT"));
     }
     let id = &args[0];
     if id == "ota" {
         println!(
-            "id: ota\nkind: policy\npackages: {}\nlifecycle: persistent until `xpad2 unfreeze ota`",
+            "id: ota\nkind: policy\npackages: {}\nlifecycle: persistent until `xpad3 unfreeze ota`",
             ota::PACKAGES.join(", ")
         );
         render_component(&ota::status());
@@ -184,16 +178,9 @@ fn command_info(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()>
     }
     if id == "ksu" {
         println!(
-            "id: ksu\nkind: runtime\nversion: 32547\nuapi: 2\nkmi: xpad2-4.19.191\nlifecycle: current-boot"
+            "id: ksu\nkind: runtime\nversion: 32551\nuapi: 2\nkmi: android12-5.10\nlate-load: --allow-shell\nlifecycle: current-boot"
         );
         render_component(&device::ksu_status(paths));
-        return Ok(());
-    }
-    if id == "suu" {
-        println!(
-            "id: suu\nkind: runtime\nversion: 40796\nflags/features: 0x5\nkmi: xpad2-sukisu-4.19.191\nlifecycle: current-boot"
-        );
-        render_component(&device::suu_status(paths));
         return Ok(());
     }
     if id == "installer-backup" {
@@ -219,7 +206,7 @@ fn command_info(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()>
 fn command_doctor(catalog: &Catalog, paths: &Paths) -> Result<()> {
     let snapshot = device::snapshot(catalog, paths);
     println!(
-        "[{}] XPad2 product family / arm64 control plane",
+        "[{}] XPad3 modern-kernel product profile / arm64 control plane",
         if snapshot.product_supported {
             "OK"
         } else {
@@ -227,7 +214,7 @@ fn command_doctor(catalog: &Catalog, paths: &Paths) -> Result<()> {
         }
     );
     println!(
-        "[{}] IonStack Root profile: canonical fingerprint /19–/260 + 4.19.191",
+        "[{}] IonStack Root profile: TALIH-PD3S /338 + exact Android 12 5.10.198 kernel",
         if snapshot.supported { "OK" } else { "WARN" }
     );
     println!(
@@ -256,11 +243,11 @@ fn command_doctor(catalog: &Catalog, paths: &Paths) -> Result<()> {
         println!("[INFO] cache empty; locked embedded artifacts are available");
     }
     if !snapshot.product_supported {
-        return Err(msg("device is not in the signed XPad2 product family"));
+        return Err(msg("device is not in the signed XPad3 product family"));
     }
     if !snapshot.supported {
         println!(
-            "[INFO] Root/KSU/SUU unavailable on this profile; update, OTA policy, installers and Manager APKs remain available"
+            "[INFO] Root/KSU unavailable on this exact profile; OTA policy, installers and Manager APK remain available"
         );
     }
     if let Some(component) = snapshot
@@ -280,7 +267,7 @@ fn command_doctor(catalog: &Catalog, paths: &Paths) -> Result<()> {
 
 fn command_verify(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
     if args.len() > 1 {
-        return Err(msg("usage: xpad2 verify [COMPONENT]"));
+        return Err(msg("usage: xpad3 verify [COMPONENT]"));
     }
     let snapshot = device::snapshot(catalog, paths);
     let selected: Vec<_> = if let Some(id) = args.first() {
@@ -293,9 +280,10 @@ fn command_verify(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<(
             .collect()
     };
     let verifying_all = args.is_empty();
-    let supported_runtime_active = snapshot.components.iter().any(|component| {
-        matches!(component.id.as_str(), "ksu" | "suu") && component.state == ComponentState::Active
-    });
+    let supported_runtime_active = snapshot
+        .components
+        .iter()
+        .any(|component| component.id == "ksu" && component.state == ComponentState::Active);
     let mut failed = Vec::new();
     for state in selected {
         render_component(state);
@@ -303,7 +291,7 @@ fn command_verify(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<(
             "temporary-root" => {
                 matches!(state.state, ComponentState::Absent | ComponentState::Active)
             }
-            "ksu" | "suu" => {
+            "ksu" => {
                 state.state == ComponentState::Active
                     || (verifying_all
                         && supported_runtime_active
@@ -331,13 +319,31 @@ fn command_root(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()>
     } else if args.first().is_some_and(|arg| arg == "--") {
         Some(root::command_from_argv(&args[1..])?)
     } else {
-        return Err(msg("usage: xpad2 root [-- COMMAND ARG...]"));
+        return Err(msg("usage: xpad3 root [-- COMMAND ARG...]"));
     };
     paths.ensure()?;
     let _lock = OperationLock::acquire(&paths.lock)?;
     let mut log = TransactionLog::start(paths, "root")?;
     let started_boot = boot_id();
     let started_selinux = selinux();
+    device::root_profile_check(catalog)?;
+    if device::ksu_module_loaded() {
+        return Err(msg(
+            "KernelSU is already active in this boot; use its su channel instead of starting another exploit session",
+        ));
+    }
+    if device::ionstack_trigger_running(catalog)? {
+        return Err(needs_reboot(
+            "IonStack trigger is already running; ordinary reboot required before another Root attempt",
+        ));
+    }
+    let trigger = device::current_root_profile(catalog)?
+        .trigger_artifact
+        .clone();
+    let package_changed = install::install_locked_apk(catalog, paths, &trigger, &mut log)?;
+    if package_changed {
+        install::ensure_installer_backup(catalog.artifact("xpad-installer")?, &mut log)?;
+    }
     let session = root::RootSession::acquire(catalog, paths, &mut log, true)?;
     let mut error = None;
     if let Some(command) = command {
@@ -355,13 +361,19 @@ fn command_root(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()>
         ended_boot_id: boot_id(),
         started_selinux,
         ended_selinux: selinux(),
-        components: vec!["ota".to_string(), "temporary-root".to_string()],
+        components: vec![
+            "ota".to_string(),
+            trigger,
+            "xpad-installer".to_string(),
+            "installer-backup".to_string(),
+            "temporary-root".to_string(),
+        ],
         error: error.clone(),
         needs_reboot: false,
     };
     log.write_receipt(paths, &receipt)?;
     println!(
-        "临时 Root 已验证并保留在当前启动周期；SELinux 当前为 {}。执行 `/data/local/tmp/su`，完成后务必运行 `xpad2 cleanup` 或普通重启。",
+        "临时 Root 已验证并保留在当前启动周期；SELinux 当前为 {}。执行 `/data/local/tmp/su`，完成后务必运行 `xpad3 cleanup` 或普通重启。",
         selinux()
     );
     if let Some(error) = error {
@@ -372,7 +384,7 @@ fn command_root(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()>
 
 fn command_freeze(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
     if args.len() != 1 || args[0] != "ota" {
-        return Err(msg("usage: xpad2 freeze ota"));
+        return Err(msg("usage: xpad3 freeze ota"));
     }
     simple_transaction(paths, "freeze ota", |log| {
         device::product_check(catalog)?;
@@ -384,7 +396,7 @@ fn command_freeze(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<(
 
 fn command_unfreeze(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
     if args.len() != 1 || args[0] != "ota" {
-        return Err(msg("usage: xpad2 unfreeze ota"));
+        return Err(msg("usage: xpad3 unfreeze ota"));
     }
     simple_transaction(paths, "unfreeze ota", |log| {
         device::product_check(catalog)?;
@@ -407,13 +419,13 @@ fn command_install(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<
 
 fn install_arbitrary_cli(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
     if args.is_empty() {
-        return Err(msg("usage: xpad2 install cli FILE [--name NAME]"));
+        return Err(msg("usage: xpad3 install cli FILE [--name NAME]"));
     }
     let source = PathBuf::from(&args[0]);
     let name = match args.get(1).map(String::as_str) {
         None => None,
         Some("--name") if args.len() == 3 => Some(args[2].as_str()),
-        _ => return Err(msg("usage: xpad2 install cli FILE [--name NAME]")),
+        _ => return Err(msg("usage: xpad3 install cli FILE [--name NAME]")),
     };
     simple_transaction(paths, "install cli", |log| {
         device::product_check(catalog)?;
@@ -425,7 +437,7 @@ fn install_arbitrary_cli(catalog: &Catalog, paths: &Paths, args: &[String]) -> R
 
 fn install_arbitrary_apk(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
     if args.len() != 1 {
-        return Err(msg("usage: xpad2 install apk FILE"));
+        return Err(msg("usage: xpad3 install apk FILE"));
     }
     let source = PathBuf::from(&args[0]);
     simple_transaction(paths, "install apk", |log| {
@@ -442,8 +454,8 @@ fn install_arbitrary_apk(catalog: &Catalog, paths: &Paths, args: &[String]) -> R
 }
 
 fn command_repair(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
-    if args.len() != 1 || matches!(args[0].as_str(), "full" | "suu-full") {
-        return Err(msg("usage: xpad2 repair COMPONENT"));
+    if args.len() != 1 || args[0] == "full" {
+        return Err(msg("usage: xpad3 repair COMPONENT"));
     }
     if args[0] == "installer-backup" {
         return simple_transaction(paths, "repair installer-backup", |log| {
@@ -534,7 +546,7 @@ fn command_cleanup(catalog: &Catalog, paths: &Paths) -> Result<()> {
 
 fn command_logs(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
     if args.len() != 2 || args[0] != "export" {
-        return Err(msg("usage: xpad2 logs export DIRECTORY"));
+        return Err(msg("usage: xpad3 logs export DIRECTORY"));
     }
     let output = logging::export_logs(catalog, paths, Path::new(&args[1]))?;
     println!("{}", output.display());
@@ -544,7 +556,7 @@ fn command_logs(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()>
 fn command_cache(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()> {
     let Some(command) = args.first().map(String::as_str) else {
         return Err(msg(
-            "usage: xpad2 cache path|list|verify|import|prune|clear",
+            "usage: xpad3 cache path|list|verify|import|prune|clear",
         ));
     };
     match command {
@@ -596,7 +608,7 @@ fn command_cache(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()
         }
         _ => {
             return Err(msg(
-                "usage: xpad2 cache path|list|verify|import DIRECTORY|prune|clear",
+                "usage: xpad3 cache path|list|verify|import DIRECTORY|prune|clear",
             ));
         }
     }
@@ -614,7 +626,7 @@ fn command_update(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<(
     simple_transaction(paths, "self update", |log| {
         let changed = update::apply(catalog, paths, &request, log)?;
         Ok(if changed {
-            vec!["xpad2".to_string()]
+            vec!["xpad3".to_string()]
         } else {
             vec![]
         })
@@ -666,10 +678,10 @@ fn yes_no(value: bool) -> &'static str {
 
 fn print_help() {
     println!(
-        "xpad2 {} - XPad2 signed installer; IonStack Root on fingerprint /19–/260\n\n\
-Usage:\n  xpad2 status [--json]\n  xpad2 doctor\n  xpad2 list | info COMPONENT\n  xpad2 update [--check] [--version VERSION] [--offline DIRECTORY_OR_ZIP]\n  xpad2 root [-- COMMAND ARG...]\n  xpad2 freeze ota | unfreeze ota\n  xpad2 install [COMPONENT...]             # default: full (KSU)\n  xpad2 install cli FILE [--name NAME]\n  xpad2 install apk FILE\n  xpad2 verify [COMPONENT]\n  xpad2 repair COMPONENT\n  xpad2 cleanup\n  xpad2 logs export DIRECTORY\n  xpad2 cache path|list|verify|import DIRECTORY|prune|clear\n\n\
-Built-ins: ota, ksu, suu, ksu-manager, suu-manager, xpad-installer, installer-backup, boominstaller, full, suu-full\n\
-Global: --cache-dir DIRECTORY (or XPAD2_CACHE_DIR)\n\n\
+        "xpad3 {} - signed installer for profile-gated XPad3 modern-kernel devices\n\n\
+Usage:\n  xpad3 status [--json]\n  xpad3 doctor\n  xpad3 list | info COMPONENT\n  xpad3 update [--check] [--version VERSION] [--offline DIRECTORY_OR_ZIP]\n  xpad3 root [-- COMMAND ARG...]\n  xpad3 freeze ota | unfreeze ota\n  xpad3 install [COMPONENT...]             # default: full (KSU)\n  xpad3 install cli FILE [--name NAME]\n  xpad3 install apk FILE\n  xpad3 verify [COMPONENT]\n  xpad3 repair COMPONENT\n  xpad3 cleanup\n  xpad3 logs export DIRECTORY\n  xpad3 cache path|list|verify|import DIRECTORY|prune|clear\n\n\
+Built-ins: ota, ksu, ksu-manager, xpad-installer, installer-backup, boominstaller, full\n\
+Global: --cache-dir DIRECTORY (or XPAD3_CACHE_DIR)\n\n\
 Self-update: --reinstall repairs the same version; a downgrade also requires --allow-downgrade.\n\n\
 Exit 75 means an ordinary reboot is required.",
         env!("CARGO_PKG_VERSION")

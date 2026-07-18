@@ -135,6 +135,22 @@ impl Catalog {
                     }
                 }
             }
+            let trigger = lock
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.id == profile.trigger_artifact)
+                .ok_or_else(|| {
+                    msg(format!(
+                        "IonStack profile {} references missing trigger {}",
+                        profile.id, profile.trigger_artifact
+                    ))
+                })?;
+            if !trigger.embedded || trigger.kind != crate::model::ArtifactKind::Apk {
+                return Err(msg(format!(
+                    "IonStack profile {} trigger {} must be an embedded APK",
+                    profile.id, profile.trigger_artifact
+                )));
+            }
         }
         Ok(Self { lock })
     }
@@ -174,7 +190,7 @@ impl Catalog {
                 Err(error) if managed_cache_may_fall_back(paths.cache_is_explicit) => {
                     if !STALE_MANAGED_CACHE_WARNED.swap(true, Ordering::Relaxed) {
                         eprintln!(
-                            "提示：默认托管缓存校验失败，已忽略并改用当前 ELF 的内嵌锁定制品：{error}；可执行 `xpad2 cache clear`。"
+                            "提示：默认托管缓存校验失败，已忽略并改用当前 ELF 的内嵌锁定制品：{error}；可执行 `xpad3 cache clear`。"
                         );
                     }
                 }
@@ -705,7 +721,7 @@ mod tests {
 
     fn test_paths(label: &str) -> Paths {
         let root = std::env::temp_dir().join(format!(
-            "xpad2-catalog-{label}-{}",
+            "xpad3-catalog-{label}-{}",
             crate::util::unique_id()
         ));
         Paths {

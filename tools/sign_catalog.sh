@@ -4,13 +4,13 @@ set -euo pipefail
 umask 077
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-BACKUP=${XPAD2_RELEASE_SIGNING_BACKUP:-}
+BACKUP=${XPAD3_RELEASE_SIGNING_BACKUP:-${XPAD2_RELEASE_SIGNING_BACKUP:-}}
 PUBLIC_KEY="$ROOT/keys/catalog-release-public.pem"
 EXPECTED_CERT_SHA256=3cb5b69579d23197ced8100818a85a46b821383a504b394a44cfe3e98ade78a2
 EXPECTED_RECOVERY_FINGERPRINT=SHA256:cOVa4bIB0vgNbqR5Vi95Q0QFDLY7lJX79sHEHTm1Q2U
 
 die() {
-  printf 'XPAD2_CATALOG_SIGN_REFUSED reason=%s\n' "$1" >&2
+  printf 'XPAD3_CATALOG_SIGN_REFUSED reason=%s\n' "$1" >&2
   exit 1
 }
 
@@ -41,23 +41,23 @@ recovery_fingerprint=$(ssh-keygen -lf "$BACKUP/recovery-rsa/id_rsa.pub" | awk '{
 [[ "$recovery_fingerprint" == "$EXPECTED_RECOVERY_FINGERPRINT" ]] || \
   die recovery-key-mismatch
 
-tmp_dir=$(mktemp -d /tmp/xpad2-catalog-sign.XXXXXX)
-trap 'rm -rf "$tmp_dir"; unset XPAD2_SIGNING_PASSWORD' EXIT
+tmp_dir=$(mktemp -d /tmp/xpad3-catalog-sign.XXXXXX)
+trap 'rm -rf "$tmp_dir"; unset XPAD3_SIGNING_PASSWORD' EXIT
 cp "$RECOVERY_KEY" "$tmp_dir/recovery-key.pem"
 chmod 600 "$tmp_dir/recovery-key.pem"
 ssh-keygen -p -m PEM -P '' -N '' -f "$tmp_dir/recovery-key.pem" >/dev/null
 
-XPAD2_SIGNING_PASSWORD=$(openssl pkeyutl -decrypt \
+XPAD3_SIGNING_PASSWORD=$(openssl pkeyutl -decrypt \
   -inkey "$tmp_dir/recovery-key.pem" \
   -pkeyopt rsa_padding_mode:oaep \
   -pkeyopt rsa_oaep_md:sha256 \
   -in "$SECRET_FILE")
-export XPAD2_SIGNING_PASSWORD
+export XPAD3_SIGNING_PASSWORD
 
 if ! openssl pkcs12 -in "$KEYSTORE" -nocerts -nodes \
-  -passin env:XPAD2_SIGNING_PASSWORD -out "$tmp_dir/private.pem" 2>/dev/null; then
+  -passin env:XPAD3_SIGNING_PASSWORD -out "$tmp_dir/private.pem" 2>/dev/null; then
   openssl pkcs12 -legacy -in "$KEYSTORE" -nocerts -nodes \
-    -passin env:XPAD2_SIGNING_PASSWORD -out "$tmp_dir/private.pem" >/dev/null 2>&1 || \
+    -passin env:XPAD3_SIGNING_PASSWORD -out "$tmp_dir/private.pem" >/dev/null 2>&1 || \
     die pkcs12-open
 fi
 chmod 600 "$tmp_dir/private.pem"
@@ -75,7 +75,7 @@ openssl dgst -sha256 -verify "$PUBLIC_KEY" -signature "$OUTPUT" "$INPUT" \
   >/dev/null || die signature-self-check
 chmod 600 "$OUTPUT"
 
-unset XPAD2_SIGNING_PASSWORD
-printf 'XPAD2_CATALOG_SIGN_OK catalog_sha256=%s signature_sha256=%s\n' \
+unset XPAD3_SIGNING_PASSWORD
+printf 'XPAD3_CATALOG_SIGN_OK catalog_sha256=%s signature_sha256=%s\n' \
   "$(shasum -a 256 "$INPUT" | awk '{print $1}')" \
   "$(shasum -a 256 "$OUTPUT" | awk '{print $1}')"

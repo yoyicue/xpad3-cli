@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DEFAULT_ROOT: &str = "/data/local/tmp/.xpad2";
+pub const DEFAULT_ROOT: &str = "/data/local/tmp/.xpad3";
 
 #[derive(Clone, Debug)]
 pub struct Paths {
@@ -32,7 +32,7 @@ impl Paths {
     ) -> Result<Self> {
         let cache_override = cache_override
             .map(Path::to_path_buf)
-            .or_else(|| std::env::var_os("XPAD2_CACHE_DIR").map(PathBuf::from));
+            .or_else(|| std::env::var_os("XPAD3_CACHE_DIR").map(PathBuf::from));
         let cache_is_explicit = cache_override.is_some();
         let state_root = PathBuf::from(DEFAULT_ROOT);
         let managed_blob_root = state_root.join("cache").join("blobs");
@@ -140,7 +140,7 @@ impl OperationLock {
         let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         if rc != 0 {
             return Err(msg(format!(
-                "another xpad2 operation is active (lock: {})",
+                "another xpad3 operation is active (lock: {})",
                 path.display()
             )));
         }
@@ -181,7 +181,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
     fs::create_dir_all(parent).at(parent)?;
     let partial = parent.join(format!(
         ".{}.{}.partial",
-        path.file_name().and_then(OsStr::to_str).unwrap_or("xpad2"),
+        path.file_name().and_then(OsStr::to_str).unwrap_or("xpad3"),
         unique_id()
     ));
     let result = (|| {
@@ -214,7 +214,7 @@ pub fn copy_atomic(source: &Path, target: &Path, mode: u32) -> Result<()> {
         target
             .file_name()
             .and_then(OsStr::to_str)
-            .unwrap_or("xpad2"),
+            .unwrap_or("xpad3"),
         unique_id()
     ));
     let result = (|| {
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn operation_lock_is_process_wide_exclusive() {
-        let root = std::env::temp_dir().join(format!("xpad2-lock-{}", unique_id()));
+        let root = std::env::temp_dir().join(format!("xpad3-lock-{}", unique_id()));
         fs::create_dir_all(&root).unwrap();
         let path = root.join("operation.lock");
         let first = OperationLock::acquire(&path).unwrap();
@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn atomic_copy_streams_and_replaces_the_target() {
-        let root = std::env::temp_dir().join(format!("xpad2-copy-{}", unique_id()));
+        let root = std::env::temp_dir().join(format!("xpad3-copy-{}", unique_id()));
         fs::create_dir_all(&root).unwrap();
         let source = root.join("source");
         let target = root.join("target");

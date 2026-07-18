@@ -44,18 +44,21 @@ jq -e '
   all(.sources[];
     (.component | type == "string" and length > 0) and
     (.repository | test("^https://github\\.com/[^/]+/[^/]+$")) and
-    (.tag | type == "string" and length > 0) and
     (.commit | test("^[0-9a-f]{40}$")) and
-    ((.tag_commit // .commit) | test("^[0-9a-f]{40}$")) and
-    (if .commit != (.tag_commit // .commit)
-      then (.workflow_run | type == "number" and . > 0) and
-        (.workflow_artifact | type == "string" and length > 0)
-      else true
+    (if has("tag")
+      then (.tag | type == "string" and length > 0) and
+        ((.tag_commit // .commit) | test("^[0-9a-f]{40}$")) and
+        (if .commit != (.tag_commit // .commit)
+          then (.workflow_run | type == "number" and . > 0) and
+            (.workflow_artifact | type == "string" and length > 0)
+          else true
+        end)
+      else (.local_path | type == "string" and startswith("../"))
     end) and
     (.license | type == "string" and length > 0)
   )
 ' "$LOCK" >/dev/null || {
-  printf 'invalid source lock: every component needs a canonical GitHub URL, tag, commit and license\n' >&2
+  printf 'invalid source lock: every component needs a canonical URL, commit, license, and tag or locked local path\n' >&2
   exit 1
 }
 
@@ -115,9 +118,27 @@ while IFS=$'\t' read -r repository tag expected tag_expected workflow_run \
     "$repository" "$tag" "$resolved" "$expected" "${workflow_run:-none}" \
     "${workflow_artifact:-none}"
   verified=$((verified + 1))
-done < <(jq -r '.sources[] |
+done < <(jq -r '.sources[] | select(has("tag")) |
   [.repository, .tag, .commit, (.tag_commit // .commit),
     (.workflow_run // ""), (.workflow_artifact // "")] |
   @tsv' "$LOCK" | sort -u)
 
-printf 'XPAD2_SOURCES_VERIFY_OK entries=%s\n' "$verified"
+while IFS=$'\t' read -r repository expected local_path; do
+  source_dir="$ROOT/$local_path"
+  [[ -d "$source_dir/.git" ]] || {
+    printf 'locked local source missing: %s\n' "$source_dir" >&2
+    exit 1
+  }
+  actual=$(git -C "$source_dir" rev-parse HEAD)
+  [[ "$actual" == "$expected" ]] || {
+    printf 'local source identity mismatch: %s expected=%s actual=%s\n' \
+      "$source_dir" "$expected" "$actual" >&2
+    exit 1
+  }
+  printf 'SOURCE_OK repository=%s local_path=%s commit=%s\n' \
+    "$repository" "$local_path" "$expected"
+  verified=$((verified + 1))
+done < <(jq -r '.sources[] | select(has("local_path")) |
+  [.repository,.commit,.local_path] | @tsv' "$LOCK" | sort -u)
+
+printf 'XPAD3_SOURCES_VERIFY_OK entries=%s\n' "$verified"

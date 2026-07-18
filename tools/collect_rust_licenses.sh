@@ -6,7 +6,7 @@ DEST=${1:-}
 APACHE_FALLBACK=${2:-}
 
 die() {
-  printf 'XPAD2_RUST_LICENSES_REFUSED reason=%s\n' "$1" >&2
+  printf 'XPAD3_RUST_LICENSES_REFUSED reason=%s\n' "$1" >&2
   exit 1
 }
 
@@ -14,7 +14,7 @@ die() {
 command -v cargo >/dev/null || die cargo-missing
 command -v jq >/dev/null || die jq-missing
 
-metadata=$(mktemp /tmp/xpad2-cargo-metadata.XXXXXX)
+metadata=$(mktemp /tmp/xpad3-cargo-metadata.XXXXXX)
 trap 'rm -f "$metadata"' EXIT
 (
   cd "$ROOT"
@@ -61,4 +61,4 @@ while IFS=$'\t' read -r name version license manifest; do
 done < <(jq -r '.packages[] | select(.source != null) |
   [.name,.version,(.license // "UNKNOWN"),.manifest_path] | @tsv' "$metadata" | sort)
 
-printf 'XPAD2_RUST_LICENSES_OK packages=%s destination=%s\n' "$count" "$DEST"
+printf 'XPAD3_RUST_LICENSES_OK packages=%s destination=%s\n' "$count" "$DEST"

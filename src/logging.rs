@@ -511,7 +511,7 @@ pub fn export_logs(catalog: &Catalog, paths: &Paths, destination: &Path) -> Resu
             &["package", "me.weishu.kernelsu"],
         )?;
         capture(
-            &staging.join("suu-package.txt"),
+            &staging.join("unrelated-package.txt"),
             "/system/bin/dumpsys",
             &["package", "com.sukisu.ultra"],
         )?;
@@ -531,7 +531,7 @@ pub fn export_logs(catalog: &Catalog, paths: &Paths, destination: &Path) -> Resu
             &["package", "com.tal.init.ota"],
         )?;
 
-        let output = destination.join(format!("xpad2log-{}.zip", timestamp_filename()));
+        let output = destination.join(format!("xpad3log-{}.zip", timestamp_filename()));
         let file = File::create(&output).at(&output)?;
         let mut zip = ZipWriter::new(file);
         let options =
@@ -666,7 +666,7 @@ mod tests {
 
     #[test]
     fn streaming_command_persists_stdout_stderr_and_exit_code() {
-        let root = std::env::temp_dir().join(format!("xpad2-stream-test-{}", unique_id()));
+        let root = std::env::temp_dir().join(format!("xpad3-stream-test-{}", unique_id()));
         let paths = Paths {
             root: root.clone(),
             cache: root.join("cache"),
@@ -701,7 +701,7 @@ mod tests {
 
     #[test]
     fn interrupted_transaction_is_recovered_with_a_receipt() {
-        let root = std::env::temp_dir().join(format!("xpad2-log-test-{}", unique_id()));
+        let root = std::env::temp_dir().join(format!("xpad3-log-test-{}", unique_id()));
         let paths = Paths {
             root: root.clone(),
             cache: root.join("cache"),

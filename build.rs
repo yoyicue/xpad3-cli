@@ -26,44 +26,27 @@ fn candidate_paths(manifest: &Path, artifact_dir: Option<&Path>, a: &Artifact) -
     }
     let parent = manifest.parent().unwrap_or(manifest);
     let mapped = match a.id.as_str() {
-        "ionstack-runner-v19-a" => Some(parent.join(
-            "xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v19-a/ionstack_reroot_device",
-        )),
-        "ionstack-preload-v19-a" => Some(parent.join(
-            "xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v19-a/ionstack_preload.so",
-        )),
-        "ionstack-runner-v19-b" => Some(parent.join(
-            "xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v19-b/ionstack_reroot_device",
-        )),
-        "ionstack-preload-v19-b" => Some(parent.join(
-            "xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v19-b/ionstack_preload.so",
-        )),
-        "ionstack-runner-v260" => Some(parent.join(
-            "xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v260/ionstack_reroot_device",
-        )),
-        "ionstack-preload-v260" => Some(parent.join(
-            "xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v260/ionstack_preload.so",
-        )),
+        "ionstack-runner" => {
+            Some(parent.join("xpad2-ionstack-poc/build/ionstack_reroot_device"))
+        }
         "ionstack-perf-target" => {
-            Some(parent.join("xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v260/ionstack_perf_target"))
+            Some(parent.join("xpad2-ionstack-poc/build/ionstack_perf_target"))
         }
-        "ionstack-chainwalk-probe" => {
-            Some(parent.join("xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v260/cve_2026_43499_chainwalk_probe_arm32"))
+        "ionstack-preload" => {
+            Some(parent.join("xpad2-ionstack-poc/build/ionstack_preload.so"))
         }
-        "ksud" => Some(parent.join("xpad2-ksu-lateload/artifacts/ksud-xpad2")),
-        "suu-ksud" => {
-            Some(parent.join("xpad2-sukisu-lateload/artifacts/ksud-sukisu-xpad2"))
+        "ionstack-chainwalk-probe" => Some(
+            parent.join("xpad2-ionstack-poc/build/cve_2026_43499_chainwalk_probe_arm32"),
+        ),
+        "ionstack-trigger" => {
+            Some(parent.join("xpad2-ionstack-poc/build/ionstack_trigger_app.apk"))
         }
+        "ksud" => Some(parent.join("xpad2-ksu-lateload/artifacts/ksud-xpad3s")),
         "ksu-manager" => {
             Some(parent.join(
                 "xpad2-reroot-android/app/src/main/res/raw/kernelsu_manager_v3_2_5_22_gccfee6dc_32547.apk",
             ))
         }
-        "suu-manager" => Some(
-            parent.join(
-                "xpad2-sukisu-lateload/artifacts/SukiSU_v4.1.3_40796-release.apk",
-            ),
-        ),
         "xpad-installer" => Some(parent.join("xpad-installer/dist/xpad-install")),
         "boominstaller" => Some(
             parent.join("BoomInstaller/out/apk/BoomInstaller-v13.6.0.r21.07a5812-production.apk"),
@@ -78,12 +61,12 @@ fn candidate_paths(manifest: &Path, artifact_dir: Option<&Path>, a: &Artifact) -
 
 fn main() {
     println!("cargo:rerun-if-changed=assets.lock.json");
-    println!("cargo:rerun-if-env-changed=XPAD2_ARTIFACT_DIR");
+    println!("cargo:rerun-if-env-changed=XPAD3_ARTIFACT_DIR");
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let lock_path = manifest.join("assets.lock.json");
     let raw = fs::read(&lock_path).expect("read assets.lock.json");
     let lock: Lock = serde_json::from_slice(&raw).expect("parse assets.lock.json");
-    let artifact_dir = env::var_os("XPAD2_ARTIFACT_DIR").map(PathBuf::from);
+    let artifact_dir = env::var_os("XPAD3_ARTIFACT_DIR").map(PathBuf::from);
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("embedded");
     fs::create_dir_all(&out_dir).expect("create embedded output directory");
     let mut generated = String::from("pub static EMBEDDED: &[EmbeddedAsset] = &[\n");
@@ -92,7 +75,7 @@ fn main() {
         let candidates = candidate_paths(&manifest, artifact_dir.as_deref(), a);
         let source = candidates.iter().find(|p| p.is_file()).unwrap_or_else(|| {
             panic!(
-                "missing locked artifact {} ({}); set XPAD2_ARTIFACT_DIR; tried: {:?}",
+                "missing locked artifact {} ({}); set XPAD3_ARTIFACT_DIR; tried: {:?}",
                 a.id, a.filename, candidates
             )
         });

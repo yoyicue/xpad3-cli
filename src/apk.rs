@@ -33,7 +33,7 @@ pub fn inspect(path: &Path) -> Result<ApkIdentity> {
         .ok_or_else(|| msg("APK manifest has no package name"))?;
     let version_code_text = axml
         .get_attribute_value("manifest", "versionCode", None)
-        .ok_or_else(|| msg("APK manifest has no versionCode"))?;
+        .unwrap_or_else(|| "0".to_string());
     let version_code = version_code_text
         .parse::<u64>()
         .map_err(|_| msg(format!("invalid APK versionCode: {version_code_text}")))?;
@@ -170,16 +170,16 @@ mod tests {
     fn locked_apks_have_expected_verified_identity() {
         for (id, package, version, cert) in [
             (
+                "ionstack-trigger",
+                "com.ionstack.trigger",
+                1,
+                "b7e9bcde0880f9dcaec960b46bea3f9164b0c71bcc3e66a200ee266b882421a9",
+            ),
+            (
                 "ksu-manager",
                 "me.weishu.kernelsu",
                 32547,
                 "c371061b19d8c7d7d6133c6a9bafe198fa944e50c1b31c9d8daa8d7f1fc2d2d6",
-            ),
-            (
-                "suu-manager",
-                "com.sukisu.ultra",
-                40796,
-                "947ae944f3de4ed4c21a7e4f7953ecf351bfa2b36239da37a34111ad29993eef",
             ),
             (
                 "boominstaller",
@@ -190,7 +190,7 @@ mod tests {
         ] {
             let asset = embedded::get(id).expect("test asset is embedded");
             let path = std::env::temp_dir().join(format!(
-                "xpad2-test-{}-{}",
+                "xpad3-test-{}-{}",
                 std::process::id(),
                 asset.filename
             ));
