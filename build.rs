@@ -26,13 +26,29 @@ fn candidate_paths(manifest: &Path, artifact_dir: Option<&Path>, a: &Artifact) -
     }
     let parent = manifest.parent().unwrap_or(manifest);
     let mapped = match a.id.as_str() {
-        "ionstack-runner" => Some(parent.join("xpad2-ionstack-poc/build/ionstack_reroot_device")),
+        "ionstack-runner-v19-a" => Some(parent.join(
+            "xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v19-a/ionstack_reroot_device",
+        )),
+        "ionstack-preload-v19-a" => Some(parent.join(
+            "xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v19-a/ionstack_preload.so",
+        )),
+        "ionstack-runner-v19-b" => Some(parent.join(
+            "xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v19-b/ionstack_reroot_device",
+        )),
+        "ionstack-preload-v19-b" => Some(parent.join(
+            "xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v19-b/ionstack_preload.so",
+        )),
+        "ionstack-runner-v260" => Some(parent.join(
+            "xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v260/ionstack_reroot_device",
+        )),
+        "ionstack-preload-v260" => Some(parent.join(
+            "xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v260/ionstack_preload.so",
+        )),
         "ionstack-perf-target" => {
-            Some(parent.join("xpad2-ionstack-poc/build/ionstack_perf_target"))
+            Some(parent.join("xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v260/ionstack_perf_target"))
         }
-        "ionstack-preload" => Some(parent.join("xpad2-ionstack-poc/build/ionstack_preload.so")),
         "ionstack-chainwalk-probe" => {
-            Some(parent.join("xpad2-ionstack-poc/build/cve_2026_43499_chainwalk_probe_arm32"))
+            Some(parent.join("xpad2-ionstack-poc/dist/xpad2-19-260/profiles/xpad2-v260/cve_2026_43499_chainwalk_probe_arm32"))
         }
         "ksud" => Some(parent.join("xpad2-ksu-lateload/artifacts/ksud-xpad2")),
         "suu-ksud" => {
@@ -50,7 +66,7 @@ fn candidate_paths(manifest: &Path, artifact_dir: Option<&Path>, a: &Artifact) -
         ),
         "xpad-installer" => Some(parent.join("xpad-installer/dist/xpad-install")),
         "boominstaller" => Some(
-            parent.join("BoomInstaller/out/apk/BoomInstaller-v13.6.0.r15.889f53c-production.apk"),
+            parent.join("BoomInstaller/out/apk/BoomInstaller-v13.6.0.r21.07a5812-production.apk"),
         ),
         _ => None,
     };

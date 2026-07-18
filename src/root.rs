@@ -5,8 +5,8 @@ use crate::logging::TransactionLog;
 use crate::model::ComponentState;
 use crate::ota;
 use crate::util::{
-    Paths, atomic_write, boot_id, output_text, remove_if_exists, run, selinux, shell_quote,
-    unique_id,
+    Paths, atomic_write, boot_id, kernel_version, output_text, remove_if_exists, run, selinux,
+    shell_quote, unique_id,
 };
 use serde_json::json;
 use std::fs;
@@ -74,11 +74,32 @@ impl RootSession {
         }
 
         cleanup_stale_shell_files();
+        let current_kernel_version = kernel_version();
+        let artifacts = catalog
+            .lock
+            .ionstack_artifacts(&current_kernel_version)
+            .ok_or_else(|| {
+                msg(format!(
+                    "no IonStack artifact profile for kernel build {:?}",
+                    current_kernel_version
+                ))
+            })?;
+        log.event(
+            "root",
+            "profile-selected",
+            json!({
+                "profile": artifacts.profile_id,
+                "kernel_version": current_kernel_version,
+                "runner": artifacts.runner,
+                "preload": artifacts.preload,
+            }),
+        )?;
+        println!("✓ IonStack profile: {}", artifacts.profile_id);
         for (id, path) in [
-            ("ionstack-runner", RUNNER),
-            ("ionstack-perf-target", PERF_TARGET),
-            ("ionstack-preload", PRELOAD),
-            ("ionstack-chainwalk-probe", PROBE),
+            (artifacts.runner, RUNNER),
+            (artifacts.perf_target, PERF_TARGET),
+            (artifacts.preload, PRELOAD),
+            (artifacts.chainwalk_probe, PROBE),
         ] {
             let resolved = catalog.resolve(id, paths)?;
             let bytes = resolved.load()?;

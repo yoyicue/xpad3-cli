@@ -61,6 +61,7 @@ impl Catalog {
             )));
         }
         lock.profile.fingerprint_policy().validate()?;
+        lock.validate_ionstack_profiles()?;
         if lock.profile.kernel_release_prefix.is_empty()
             || lock.profile.kernel_version.is_empty()
             || lock.profile.abi != "arm64-v8a"
@@ -84,6 +85,55 @@ impl Catalog {
                     "embedded artifact identity mismatch: {}",
                     artifact.id
                 )));
+            }
+        }
+        for profile in &lock.ionstack_profiles {
+            let role_ids = [
+                &profile.runner_artifact,
+                &profile.perf_target_artifact,
+                &profile.preload_artifact,
+                &profile.chainwalk_probe_artifact,
+            ];
+            if role_ids
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<BTreeSet<_>>()
+                .len()
+                != role_ids.len()
+            {
+                return Err(msg(format!(
+                    "IonStack profile {} reuses one artifact for multiple roles",
+                    profile.id
+                )));
+            }
+            let mut source_version = None;
+            for id in role_ids {
+                let artifact = lock
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.id == *id)
+                    .ok_or_else(|| {
+                        msg(format!(
+                            "IonStack profile {} references missing artifact {}",
+                            profile.id, id
+                        ))
+                    })?;
+                if !artifact.embedded || artifact.kind != crate::model::ArtifactKind::Internal {
+                    return Err(msg(format!(
+                        "IonStack profile {} artifact {} must be embedded and internal",
+                        profile.id, id
+                    )));
+                }
+                match source_version {
+                    None => source_version = Some(artifact.version.as_str()),
+                    Some(version) if version == artifact.version.as_str() => {}
+                    Some(_) => {
+                        return Err(msg(format!(
+                            "IonStack profile {} mixes artifacts from different source versions",
+                            profile.id
+                        )));
+                    }
+                }
             }
         }
         Ok(Self { lock })
@@ -254,6 +304,7 @@ pub fn verify_external_catalog(cache: &Path, baseline: &Catalog) -> Result<Asset
         || external.product_version != baseline.lock.product_version
         || external.catalog_version != baseline.lock.catalog_version
         || external.profile != baseline.lock.profile
+        || external.ionstack_profiles != baseline.lock.ionstack_profiles
     {
         return Err(Error::CatalogReleaseMismatch);
     }
@@ -729,6 +780,7 @@ mod tests {
                 kernel_version: String::new(),
                 abi: "arm64-v8a".to_string(),
             },
+            ionstack_profiles: Vec::new(),
             artifacts: vec![artifact],
         };
         let source = paths.root.join("source");

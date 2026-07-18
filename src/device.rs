@@ -377,6 +377,81 @@ fn parse_installer_backup_status(success: bool, text: &str) -> ComponentStatus {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct BoomProviderStatus {
+    provider_ready: bool,
+    pairing_key_present: bool,
+    pairing_key_valid: bool,
+    paired: bool,
+    state: String,
+}
+
+fn bundle_field<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    let marker = format!("{key}=");
+    let start = text.find(&marker)? + marker.len();
+    let value = &text[start..];
+    let end = value.find([',', '}']).unwrap_or(value.len());
+    Some(value[..end].trim())
+}
+
+fn parse_boom_provider_status(text: &str) -> std::result::Result<BoomProviderStatus, String> {
+    fn boolean(text: &str, key: &str) -> std::result::Result<bool, String> {
+        match bundle_field(text, key) {
+            Some("true") => Ok(true),
+            Some("false") => Ok(false),
+            Some(value) => Err(format!("invalid {key} value {value:?}")),
+            None => Err(format!("missing {key}")),
+        }
+    }
+
+    let state = bundle_field(text, "state")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "missing state".to_string())?;
+    Ok(BoomProviderStatus {
+        provider_ready: boolean(text, "providerReady")?,
+        pairing_key_present: boolean(text, "pairingKeyPresent")?,
+        pairing_key_valid: boolean(text, "pairingKeyValid")?,
+        paired: boolean(text, "paired")?,
+        state: state.to_string(),
+    })
+}
+
+fn boom_provider_status() -> std::result::Result<BoomProviderStatus, String> {
+    let output = run(
+        "/system/bin/content",
+        &[
+            "call",
+            "--uri",
+            "content://com.yoyicue.boominstaller.shizuku",
+            "--method",
+            "getAutoStartStatus",
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let text = output_text(&output);
+    if !output.status.success() {
+        return Err(format!("Provider call failed: {text}"));
+    }
+    parse_boom_provider_status(&text)
+        .map_err(|error| format!("unrecognized Provider status ({error}): {text}"))
+}
+
+fn boom_provider_failure_state(state: &str) -> bool {
+    matches!(
+        state,
+        "network-untrusted"
+            | "wireless-adb-not-started"
+            | "key-invalid"
+            | "not-paired"
+            | "pairing-failed"
+            | "local-adb-command-failed"
+            | "local-adb-connect-failed"
+            | "service-start-timeout"
+            | "failed"
+            | "unsupported"
+    )
+}
+
 pub fn apk_status(artifact: &Artifact) -> ComponentStatus {
     let package = artifact.package.as_deref().unwrap_or("");
     let identity = match installed_apk_identity(package) {
@@ -440,6 +515,59 @@ pub fn apk_status(artifact: &Artifact) -> ComponentStatus {
         );
     };
     if artifact.id == "boominstaller" {
+        let provider = match boom_provider_status() {
+            Ok(provider) => provider,
+            Err(error) => {
+                return status(
+                    &artifact.id,
+                    ComponentState::Broken,
+                    Some(&format!(
+                        "APK identity is correct but BoomInstaller Provider is unavailable: {error}"
+                    )),
+                );
+            }
+        };
+        if !provider.provider_ready {
+            return status(
+                &artifact.id,
+                ComponentState::Broken,
+                Some("APK identity is correct but BoomInstaller Provider is not ready"),
+            );
+        }
+        if !provider.pairing_key_present {
+            return status(
+                &artifact.id,
+                ComponentState::Broken,
+                Some("BoomInstaller Provider is ready but the wireless ADB pairing key is missing"),
+            );
+        }
+        if !provider.pairing_key_valid {
+            return status(
+                &artifact.id,
+                ComponentState::Broken,
+                Some("BoomInstaller wireless ADB pairing key cannot be decrypted"),
+            );
+        }
+        if !provider.paired {
+            return status(
+                &artifact.id,
+                ComponentState::Broken,
+                Some(&format!(
+                    "BoomInstaller pairing is incomplete (state={})",
+                    provider.state
+                )),
+            );
+        }
+        if boom_provider_failure_state(&provider.state) {
+            return status(
+                &artifact.id,
+                ComponentState::Broken,
+                Some(&format!(
+                    "BoomInstaller automatic start failed (state={})",
+                    provider.state
+                )),
+            );
+        }
         let autostart = global_setting("adb_enabled").as_deref() == Some("1")
             && global_setting("adb_wifi_enabled").as_deref() == Some("1")
             && global_setting("adb_allowed_connection_time").as_deref() == Some("0");
@@ -472,8 +600,8 @@ pub fn apk_status(artifact: &Artifact) -> ComponentStatus {
                 &artifact.id,
                 ComponentState::Active,
                 Some(&format!(
-                    "APK identity, installer={}, service uid={} ({}) and autostart settings verified",
-                    attribution, uid, mode
+                    "APK identity, Provider, paired key, installer={}, service uid={} ({}) and autostart settings verified (state={})",
+                    attribution, uid, mode, provider.state
                 )),
             )
         } else if service_uids.is_empty() && autostart {
@@ -481,8 +609,8 @@ pub fn apk_status(artifact: &Artifact) -> ComponentStatus {
                 &artifact.id,
                 ComponentState::Ready,
                 Some(&format!(
-                    "APK identity and autostart are correct; service is not active yet (installer={})",
-                    attribution
+                    "APK identity, Provider, paired key and autostart are correct; service is not active yet (installer={}, state={})",
+                    attribution, provider.state
                 )),
             )
         } else {
@@ -490,8 +618,8 @@ pub fn apk_status(artifact: &Artifact) -> ComponentStatus {
                 &artifact.id,
                 ComponentState::Broken,
                 Some(&format!(
-                    "APK identity is correct but runtime target is incomplete (service/autostart, installer={})",
-                    attribution
+                    "APK identity and paired Provider are correct but runtime target is incomplete (service/autostart, installer={}, state={})",
+                    attribution, provider.state
                 )),
             )
         }
@@ -623,7 +751,6 @@ pub fn snapshot(catalog: &Catalog, paths: &Paths) -> DeviceStatus {
     let fingerprint_policy = catalog.lock.profile.fingerprint_policy();
     let supported = catalog
         .lock
-        .profile
         .matches_runtime(&fingerprint, &kernel, &version, &abi);
     let mut components = Vec::new();
     components.push(ota::status());
@@ -689,12 +816,11 @@ pub fn profile_check(catalog: &Catalog) -> crate::error::Result<()> {
             catalog.lock.profile.kernel_release_prefix, kernel
         )));
     }
-    if !catalog.lock.profile.kernel_version.is_empty()
-        && version != catalog.lock.profile.kernel_version
-    {
+    if catalog.lock.ionstack_artifacts(&version).is_none() {
         return Err(crate::error::msg(format!(
-            "unsupported kernel build: expected {:?}, got {:?}",
-            catalog.lock.profile.kernel_version, version
+            "unsupported kernel build: expected one of [{}], got {:?}",
+            catalog.lock.kernel_build_expectation(),
+            version
         )));
     }
     if abi != catalog.lock.profile.abi {
@@ -763,6 +889,47 @@ mod tests {
             "ZNXRUN_STATUS status=healthy alias=healthy uid=10070 expected_uid=10070 anchor=anchored",
         );
         assert_eq!(state.state, ComponentState::Broken);
+    }
+
+    #[test]
+    fn parses_boom_provider_pairing_health_from_content_bundle() {
+        let parsed = parse_boom_provider_status(
+            "Result: Bundle[{mode=1, paired=true, pairingKeyValid=true, state=pending-reboot, providerReady=true, pairingKeyPresent=true, serverUid=-1}]",
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            BoomProviderStatus {
+                provider_ready: true,
+                pairing_key_present: true,
+                pairing_key_valid: true,
+                paired: true,
+                state: "pending-reboot".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn boom_provider_health_rejects_old_or_ambiguous_status() {
+        let error =
+            parse_boom_provider_status("Result: Bundle[{mode=1, state=started, serverUid=2000}]")
+                .unwrap_err();
+        assert!(error.contains("providerReady"));
+    }
+
+    #[test]
+    fn boom_provider_failure_states_are_not_treated_as_pending_reboot() {
+        for state in [
+            "network-untrusted",
+            "wireless-adb-not-started",
+            "key-invalid",
+            "local-adb-connect-failed",
+            "service-start-timeout",
+        ] {
+            assert!(boom_provider_failure_state(state), "{state}");
+        }
+        assert!(!boom_provider_failure_state("pending-reboot"));
+        assert!(!boom_provider_failure_state("started"));
     }
 
     #[test]

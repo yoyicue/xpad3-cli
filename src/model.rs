@@ -6,6 +6,8 @@ pub struct AssetsLock {
     pub product_version: String,
     pub catalog_version: String,
     pub profile: DeviceProfile,
+    #[serde(default)]
+    pub ionstack_profiles: Vec<IonStackProfile>,
     pub artifacts: Vec<Artifact>,
 }
 
@@ -28,6 +30,17 @@ pub struct DeviceProfile {
     #[serde(default)]
     pub kernel_version: String,
     pub abi: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct IonStackProfile {
+    pub id: String,
+    pub kernel_version: String,
+    pub runner_artifact: String,
+    pub perf_target_artifact: String,
+    pub preload_artifact: String,
+    pub chainwalk_probe_artifact: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

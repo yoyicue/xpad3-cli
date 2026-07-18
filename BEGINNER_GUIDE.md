@@ -10,13 +10,26 @@
 - 一台电脑（Windows、macOS 或 Linux）；
 - 一根能传数据的 USB 线；
 - 电脑已经安装 Android Platform Tools，终端里能运行 `adb`；
-- Pad 已开启 USB 调试，并且是受支持的 `/260` 固件；
+- Pad 已开启 USB 调试，并且 fingerprint incremental 是 `/19`–`/260`；
 - Pad 中的重要数据已有备份，设备是你本人所有或已经获得明确授权。
 
-`xpad2` 只支持下面这个精确固件：
+`xpad2` 只支持下面这个签名固件范围：
 
 ```text
-alps/vnd_ls12_mt8797_wifi_64/ls12_mt8797_wifi_64:13/TP1A.220624.014/260:user/release-keys
+alps/vnd_ls12_mt8797_wifi_64/ls12_mt8797_wifi_64:13/TP1A.220624.014/<19..260>:user/release-keys
+```
+
+其中 `<19..260>` 表示 canonical 十进制闭区间，不是字面文本。设备和构建前缀、
+`:user/release-keys` 后缀、内核 `4.19.191` 系列、精确 `uname -v` 及 arm64 ABI 仍必须
+匹配。该范围不等于所有旧内核都已支持。
+V231227 的 `/1703659196` 当前不在生产支持范围内。
+
+当前只接受以下三种精确 `uname -v`：
+
+```text
+#1 SMP PREEMPT Tue Aug 13 02:06:24 CST 2024   (xpad2-v19-a)
+#1 SMP PREEMPT Mon Dec 16 23:29:13 CST 2024   (xpad2-v19-b)
+#1 SMP PREEMPT Mon Jun 29 04:08:29 CST 2026   (xpad2-v260)
 ```
 
 临时 Root 过程存在自动重启或 kernel panic 风险。不要在电量过低时操作，也不要在执行
@@ -49,30 +62,30 @@ adb -s 你的设备序列号
 ## 3. 下载并校验 xpad2
 
 当前正式版本是
-[`v0.4.14`](https://github.com/yoyicue/xpad2-cli/releases/tag/v0.4.14)。只需要下载：
+[`v0.5.0`](https://github.com/yoyicue/xpad2-cli/releases/tag/v0.5.0)。只需要下载：
 
 ```text
-xpad2-v0.4.14-android-arm64
+xpad2-v0.5.0-android-arm64
 ```
 
 macOS 或 Linux 可以直接执行：
 
 ```sh
-curl -fLO https://github.com/yoyicue/xpad2-cli/releases/download/v0.4.14/xpad2-v0.4.14-android-arm64
-shasum -a 256 xpad2-v0.4.14-android-arm64
+curl -fLO https://github.com/yoyicue/xpad2-cli/releases/download/v0.5.0/xpad2-v0.5.0-android-arm64
+shasum -a 256 xpad2-v0.5.0-android-arm64
 ```
 
 Windows PowerShell 可以执行：
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/yoyicue/xpad2-cli/releases/download/v0.4.14/xpad2-v0.4.14-android-arm64" -OutFile "xpad2-v0.4.14-android-arm64"
-Get-FileHash .\xpad2-v0.4.14-android-arm64 -Algorithm SHA256
+Invoke-WebRequest -Uri "https://github.com/yoyicue/xpad2-cli/releases/download/v0.5.0/xpad2-v0.5.0-android-arm64" -OutFile "xpad2-v0.5.0-android-arm64"
+Get-FileHash .\xpad2-v0.5.0-android-arm64 -Algorithm SHA256
 ```
 
 正确的 SHA-256 是：
 
 ```text
-9650caa66aaf65178be605749b48491b40fb62fb64b4a3a407b1c9ead270866f
+5d77ff265a125ed767cf19ace37760382cb478dcbbc8c73db16525620bdbccce
 ```
 
 哈希不一致时不要继续，重新下载文件。
@@ -82,7 +95,7 @@ Get-FileHash .\xpad2-v0.4.14-android-arm64 -Algorithm SHA256
 在下载文件所在目录执行：
 
 ```sh
-adb push xpad2-v0.4.14-android-arm64 /data/local/tmp/xpad2
+adb push xpad2-v0.5.0-android-arm64 /data/local/tmp/xpad2
 adb shell chmod 700 /data/local/tmp/xpad2
 adb shell /data/local/tmp/xpad2 version
 ```
@@ -90,7 +103,7 @@ adb shell /data/local/tmp/xpad2 version
 最后一条命令应显示：
 
 ```text
-xpad2 0.4.14 (catalog 2026-07-17.1)
+xpad2 0.5.0 (catalog 2026-07-18.3)
 ```
 
 这就表示 `xpad2` 已经安装到了：
@@ -110,7 +123,7 @@ adb shell /data/local/tmp/xpad2 status
 确认输出中包含：
 
 ```text
-/260支持=yes
+指纹/19–/260支持=yes
 SELinux=Enforcing
 ```
 
@@ -137,6 +150,11 @@ adb shell /data/local/tmp/xpad2 install
 
 临时 Root 通常需要几分钟，最多尝试 6 轮，并有 20 分钟安全截止。终端仍在持续输出时
 请耐心等待，不要重复执行命令。
+
+首次配置 BoomInstaller 无线调试时，Pad 可能弹出“始终允许此网络”之类的网络信任
+确认。请保持屏幕解锁并点允许；工具会等待无线 ADB 开关与 TLS 端口连续稳定后再配对，
+最多等待 90 秒。没有确认时会明确报告 `waiting-network-trust` 并失败，不会假装安装成功。
+配对完成后若显示 `pending-reboot`，按提示普通重启一次。
 
 小白用户不要直接运行：
 
@@ -244,7 +262,8 @@ adb shell /data/local/tmp/xpad2 unfreeze ota
 adb shell /data/local/tmp/xpad2 freeze ota
 ```
 
-系统升级可能使 `/260` Root 链失效。升级前应先确认新固件是否已经受支持。
+系统升级可能使 Root 链失效。升级前应先确认新 fingerprint incremental、内核和 ABI
+是否仍在签名 profile 内。
 
 ## 11. 出问题时导出日志
 
@@ -295,8 +314,9 @@ adb shell /data/local/tmp/xpad2 update --offline /data/local/tmp/xpad2-update-vX
 adb shell rm /data/local/tmp/xpad2-update-vX.Y.Z.zip
 ```
 
-如果当前仍是 v0.1.x，需要先按第 3–4 节手工覆盖到当前 v0.4.14 一次；旧版本没有
-自更新命令。
+如果当前仍是 v0.1.x，或设备不是精确 `/260` 且当前 xpad2 早于 v0.5.0，需要先按
+第 3–4 节手工覆盖到当前 v0.5.0 一次；旧 updater 的精确 `/260` 门禁无法自行跨入
+新的 fingerprint 范围。
 
 ## 常见问题
 

@@ -970,7 +970,10 @@ fn validate_target_profile(manifest: &UpdateManifest, catalog: &Catalog) -> Resu
     let abi = getprop("ro.product.cpu.abi");
     let kernel = kernel_release();
     let version = kernel_version();
-    if !profile.matches_runtime(&fingerprint, &kernel, &version, &abi) {
+    if !catalog
+        .lock
+        .matches_runtime(&fingerprint, &kernel, &version, &abi)
+    {
         return Err(msg(
             "current device does not match the signed update profile",
         ));
