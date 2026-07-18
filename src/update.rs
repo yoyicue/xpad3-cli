@@ -6,8 +6,8 @@ use crate::model::AssetsLock;
 #[cfg(test)]
 use crate::model::DeviceProfile;
 use crate::util::{
-    Paths, atomic_write, copy_atomic, getprop, kernel_release, safe_filename, sha256_bytes,
-    sha256_file, unique_id, validate_elf_arm64,
+    Paths, atomic_write, copy_atomic, getprop, safe_filename, sha256_bytes, sha256_file, unique_id,
+    validate_elf_arm64,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -352,7 +352,7 @@ pub fn parse_args(args: &[String]) -> Result<UpdateRequest> {
 }
 
 pub fn check(catalog: &Catalog, paths: &Paths, request: &UpdateRequest) -> Result<()> {
-    device::profile_check(catalog)?;
+    device::product_check(catalog)?;
     let workspace = Workspace::create(paths)?;
     let verified = acquire_manifest(request, &workspace)?;
     validate_target_profile(&verified.manifest, catalog)?;
@@ -401,7 +401,7 @@ pub fn apply(
             "self-update refuses --cache-dir/XPAD2_CACHE_DIR; use the managed versioned cache",
         ));
     }
-    device::profile_check(catalog)?;
+    device::product_check(catalog)?;
     let workspace = Workspace::create(paths)?;
     let verified = acquire_manifest(request, &workspace)?;
     validate_target_profile(&verified.manifest, catalog)?;
@@ -607,7 +607,7 @@ fn verify_candidate_identity(
         ));
     }
     catalog.lock.profile.fingerprint_policy().validate()?;
-    device::profile_check(catalog)?;
+    device::product_check(catalog)?;
     let current_exe = std::env::current_exe()
         .map_err(|error| msg(format!("cannot resolve candidate executable: {error}")))?;
     verify_file_identity(&current_exe, &manifest.binary, "candidate ELF")?;
@@ -964,17 +964,12 @@ fn validate_target_profile(manifest: &UpdateManifest, catalog: &Catalog) -> Resu
     {
         return Err(msg("update release targets a different device profile"));
     }
-    let fingerprint_policy = profile.fingerprint_policy();
-    fingerprint_policy.validate()?;
+    profile.fingerprint_policy().validate()?;
     let fingerprint = getprop("ro.build.fingerprint");
     let abi = getprop("ro.product.cpu.abi");
-    let kernel = kernel_release();
-    if !catalog
-        .lock
-        .matches_technical_runtime(&fingerprint, &kernel, &abi)
-    {
+    if !catalog.lock.matches_product_device(&fingerprint, &abi) {
         return Err(msg(
-            "current device does not match the signed update profile",
+            "current device does not match the signed XPad2 product family",
         ));
     }
     Ok(())

@@ -51,7 +51,7 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
     let mut package_manager_changed = false;
 
     let mut result = (|| {
-        device::profile_check(catalog)?;
+        device::product_check(catalog)?;
         let runtime_id = components
             .iter()
             .find(|id| id.as_str() == "ksu" || id.as_str() == "suu")
@@ -63,6 +63,10 @@ pub fn install_components(catalog: &Catalog, paths: &Paths, requested: &[String]
         };
 
         if let Some(runtime_id) = runtime_id {
+            // A runtime request is the only built-in install path that needs
+            // the IonStack fingerprint/kernel gate. Product-family installs
+            // below remain available when Root is unsupported.
+            device::root_profile_check(catalog)?;
             let ota_status = ota::freeze(&mut log)?;
             println!(
                 "✓ ota: {}",

@@ -189,6 +189,13 @@ impl AssetsLock {
             && abi == self.profile.abi
     }
 
+    pub fn matches_product_device(&self, fingerprint: &str, abi: &str) -> bool {
+        self.profile
+            .fingerprint_policy()
+            .matches_product_family(fingerprint)
+            && abi == self.profile.abi
+    }
+
     #[cfg(test)]
     pub fn matches_runtime(
         &self,
@@ -241,6 +248,14 @@ impl FingerprintPolicy<'_> {
         self.incremental(fingerprint).is_some_and(|incremental| {
             incremental >= self.incremental_min && incremental <= self.incremental_max
         })
+    }
+
+    pub fn matches_product_family(self, fingerprint: &str) -> bool {
+        if self.is_legacy_exact() {
+            fingerprint == self.exact_anchor
+        } else {
+            self.incremental(fingerprint).is_some()
+        }
     }
 
     pub fn incremental(self, fingerprint: &str) -> Option<u32> {
@@ -367,6 +382,26 @@ mod tests {
             assert_eq!(policy.incremental(&fingerprint), Some(incremental));
         }
         assert!(!policy.matches(&format!("{PREFIX}261{SUFFIX}")));
+    }
+
+    #[test]
+    fn product_family_gate_does_not_inherit_the_root_incremental_range() {
+        let lock = ranged_lock();
+        for incremental in [18, 19, 260, 261, 1_703_659_196] {
+            let fingerprint = format!("{PREFIX}{incremental}{SUFFIX}");
+            assert!(
+                lock.matches_product_device(&fingerprint, "arm64-v8a"),
+                "product gate rejected {incremental}"
+            );
+        }
+        let timestamp = format!("{PREFIX}1703659196{SUFFIX}");
+        assert!(!lock.matches_technical_runtime(&timestamp, "4.19.191+", "arm64-v8a"));
+        assert!(!lock.matches_product_device(&timestamp, "armeabi-v7a"));
+        assert!(!lock.matches_product_device(&format!("{PREFIX}01703659196{SUFFIX}"), "arm64-v8a"));
+        assert!(!lock.matches_product_device(
+            "alps/vnd_other/device:13/TP1A.220624.014/260:user/release-keys",
+            "arm64-v8a"
+        ));
     }
 
     #[test]
@@ -529,8 +564,8 @@ mod tests {
         )))
         .unwrap();
         assert_eq!(legacy.schema, 1);
-        assert_eq!(legacy.product_version, "0.5.1");
-        assert_eq!(legacy.catalog_version, "2026-07-18.4");
+        assert_eq!(legacy.product_version, "0.5.2");
+        assert_eq!(legacy.catalog_version, "2026-07-18.5");
         assert!(legacy.profile.build_fingerprint.contains("/260:"));
         assert_eq!(legacy.profile.kernel_release_prefix, "4.19.191");
         assert_eq!(legacy.profile.abi, "arm64-v8a");

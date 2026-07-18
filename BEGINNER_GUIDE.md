@@ -10,18 +10,20 @@
 - 一台电脑（Windows、macOS 或 Linux）；
 - 一根能传数据的 USB 线；
 - 电脑已经安装 Android Platform Tools，终端里能运行 `adb`；
-- Pad 已开启 USB 调试，并且 fingerprint incremental 是 `/19`–`/260`；
+- Pad 已开启 USB 调试，fingerprint 属于下述 XPad2 产品族；如需 Root，incremental 还要
+  位于 `/19`–`/260`；
 - Pad 中的重要数据已有备份，设备是你本人所有或已经获得明确授权。
 
-`xpad2` 只支持下面这个签名固件范围：
+IonStack Root 只支持下面这个签名固件范围：
 
 ```text
 alps/vnd_ls12_mt8797_wifi_64/ls12_mt8797_wifi_64:13/TP1A.220624.014/<19..260>:user/release-keys
 ```
 
-其中 `<19..260>` 表示 canonical 十进制闭区间，不是字面文本。设备和构建前缀、
-`:user/release-keys` 后缀、内核 `4.19.191` 系列及 arm64 ABI 仍必须匹配。
-V231227 的 `/1703659196` 当前不在生产支持范围内。
+其中 `<19..260>` 表示 canonical 十进制闭区间，不是字面文本。产品族门固定设备和构建
+前缀、`:user/release-keys` 后缀、canonical 数字 incremental 及 arm64 ABI；Root 门再
+要求 `/19`–`/260` 和内核 `4.19.191`。V231227 的 `/1703659196` 可以使用更新、OTA、
+安装器和 Manager，但不能执行 Root/KSU/SUU/full。
 
 以下三种精确 `uname -v` 会直接走快速路径：
 
@@ -65,30 +67,30 @@ adb -s 你的设备序列号
 ## 3. 下载并校验 xpad2
 
 当前正式版本是
-[`v0.5.1`](https://github.com/yoyicue/xpad2-cli/releases/tag/v0.5.1)。只需要下载：
+[`v0.5.2`](https://github.com/yoyicue/xpad2-cli/releases/tag/v0.5.2)。只需要下载：
 
 ```text
-xpad2-v0.5.1-android-arm64
+xpad2-v0.5.2-android-arm64
 ```
 
 macOS 或 Linux 可以直接执行：
 
 ```sh
-curl -fLO https://github.com/yoyicue/xpad2-cli/releases/download/v0.5.1/xpad2-v0.5.1-android-arm64
-shasum -a 256 xpad2-v0.5.1-android-arm64
+curl -fLO https://github.com/yoyicue/xpad2-cli/releases/download/v0.5.2/xpad2-v0.5.2-android-arm64
+shasum -a 256 xpad2-v0.5.2-android-arm64
 ```
 
 Windows PowerShell 可以执行：
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/yoyicue/xpad2-cli/releases/download/v0.5.1/xpad2-v0.5.1-android-arm64" -OutFile "xpad2-v0.5.1-android-arm64"
-Get-FileHash .\xpad2-v0.5.1-android-arm64 -Algorithm SHA256
+Invoke-WebRequest -Uri "https://github.com/yoyicue/xpad2-cli/releases/download/v0.5.2/xpad2-v0.5.2-android-arm64" -OutFile "xpad2-v0.5.2-android-arm64"
+Get-FileHash .\xpad2-v0.5.2-android-arm64 -Algorithm SHA256
 ```
 
 正确的 SHA-256 是：
 
 ```text
-2a03faf398b9de2011d5fc1d5d69bb66192fee7e03998fe3f518d2246a1a5ac3
+d63c9f03b6160c8b6c857c0a299411979d676a5918648ccdce386e8b9b40a7c3
 ```
 
 哈希不一致时不要继续，重新下载文件。
@@ -98,7 +100,7 @@ Get-FileHash .\xpad2-v0.5.1-android-arm64 -Algorithm SHA256
 在下载文件所在目录执行：
 
 ```sh
-adb push xpad2-v0.5.1-android-arm64 /data/local/tmp/xpad2
+adb push xpad2-v0.5.2-android-arm64 /data/local/tmp/xpad2
 adb shell chmod 700 /data/local/tmp/xpad2
 adb shell /data/local/tmp/xpad2 version
 ```
@@ -106,7 +108,7 @@ adb shell /data/local/tmp/xpad2 version
 最后一条命令应显示：
 
 ```text
-xpad2 0.5.1 (catalog 2026-07-18.4)
+xpad2 0.5.2 (catalog 2026-07-18.5)
 ```
 
 这就表示 `xpad2` 已经安装到了：
@@ -126,11 +128,27 @@ adb shell /data/local/tmp/xpad2 status
 确认输出中包含：
 
 ```text
-指纹/19–/260支持=yes
+XPad2设备族=yes
+IonStack-Root范围=yes
 SELinux=Enforcing
 ```
 
-如果提示固件不支持，不要尝试绕过检查，也不要继续 Root。
+如果 `XPad2设备族=no`，不要继续安装。如果只有 `IonStack-Root范围=no`，不要尝试绕过
+Root 门，但仍可使用下面的无 Root 安装方式。
+
+### 指纹不能 Root 时能安装什么
+
+同一 XPad2 产品族仍可执行：
+
+```sh
+adb shell /data/local/tmp/xpad2 update --check
+adb shell /data/local/tmp/xpad2 freeze ota
+adb shell /data/local/tmp/xpad2 install xpad-installer installer-backup ksu-manager boominstaller
+```
+
+也支持 `suu-manager`、`install cli FILE` 和 `install apk FILE`。Manager 只安装管理界面，
+不会在没有 KSU/SUU 驱动时产生 Root。此时不要执行无参数 `install`，因为它等价于包含
+KSU 的 `full`，会在 IonStack 写入前被 Root 门拒绝。
 
 ## 6. 一键完成安装
 
@@ -318,7 +336,7 @@ adb shell rm /data/local/tmp/xpad2-update-vX.Y.Z.zip
 ```
 
 如果当前仍是 v0.1.x，或设备不是精确 `/260` 且当前 xpad2 早于 v0.5.0，需要先按
-第 3–4 节手工覆盖到当前 v0.5.1 一次；旧 updater 的精确 `/260` 门禁无法自行跨入
+第 3–4 节手工覆盖到当前 v0.5.2 一次；旧 updater 的精确 `/260` 门禁无法自行跨入
 新的 fingerprint 范围。
 
 ## 常见问题

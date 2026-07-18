@@ -115,8 +115,9 @@ fn command_status(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<(
         println!("{}", serde_json::to_string_pretty(&status)?);
     } else {
         println!(
-            "xpad2 {}  指纹/19–/260支持={}  SELinux={}",
+            "xpad2 {}  XPad2设备族={}  IonStack-Root范围={}  SELinux={}",
             status.product_version,
+            yes_no(status.product_supported),
             yes_no(status.supported),
             status.selinux
         );
@@ -218,8 +219,16 @@ fn command_info(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()>
 fn command_doctor(catalog: &Catalog, paths: &Paths) -> Result<()> {
     let snapshot = device::snapshot(catalog, paths);
     println!(
-        "[{}] firmware fingerprint incremental /19–/260",
-        if snapshot.supported { "OK" } else { "FAIL" }
+        "[{}] XPad2 product family / arm64 control plane",
+        if snapshot.product_supported {
+            "OK"
+        } else {
+            "FAIL"
+        }
+    );
+    println!(
+        "[{}] IonStack Root profile: canonical fingerprint /19–/260 + 4.19.191",
+        if snapshot.supported { "OK" } else { "WARN" }
     );
     println!(
         "[{}] SELinux {}",
@@ -246,10 +255,13 @@ fn command_doctor(catalog: &Catalog, paths: &Paths) -> Result<()> {
     } else {
         println!("[INFO] cache empty; locked embedded artifacts are available");
     }
+    if !snapshot.product_supported {
+        return Err(msg("device is not in the signed XPad2 product family"));
+    }
     if !snapshot.supported {
-        return Err(msg(
-            "device is not in the supported XPad2 fingerprint /19–/260 profile",
-        ));
+        println!(
+            "[INFO] Root/KSU/SUU unavailable on this profile; update, OTA policy, installers and Manager APKs remain available"
+        );
     }
     if let Some(component) = snapshot
         .components
@@ -363,7 +375,7 @@ fn command_freeze(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<(
         return Err(msg("usage: xpad2 freeze ota"));
     }
     simple_transaction(paths, "freeze ota", |log| {
-        device::profile_check(catalog)?;
+        device::product_check(catalog)?;
         let state = ota::freeze(log)?;
         render_component(&state);
         Ok(vec!["ota".to_string()])
@@ -375,7 +387,7 @@ fn command_unfreeze(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result
         return Err(msg("usage: xpad2 unfreeze ota"));
     }
     simple_transaction(paths, "unfreeze ota", |log| {
-        device::profile_check(catalog)?;
+        device::product_check(catalog)?;
         let state = ota::unfreeze(log)?;
         render_component(&state);
         Ok(vec!["ota".to_string()])
@@ -404,7 +416,7 @@ fn install_arbitrary_cli(catalog: &Catalog, paths: &Paths, args: &[String]) -> R
         _ => return Err(msg("usage: xpad2 install cli FILE [--name NAME]")),
     };
     simple_transaction(paths, "install cli", |log| {
-        device::profile_check(catalog)?;
+        device::product_check(catalog)?;
         let target = install::install_arbitrary_cli(&source, name, log)?;
         println!("installed: {}", target.display());
         Ok(vec![target.display().to_string()])
@@ -417,7 +429,7 @@ fn install_arbitrary_apk(catalog: &Catalog, paths: &Paths, args: &[String]) -> R
     }
     let source = PathBuf::from(&args[0]);
     simple_transaction(paths, "install apk", |log| {
-        device::profile_check(catalog)?;
+        device::product_check(catalog)?;
         install::install_locked_cli(catalog, paths, "xpad-installer", log)?;
         let identity =
             install::install_arbitrary_apk(&source, catalog.artifact("xpad-installer")?, log)?;
@@ -435,7 +447,7 @@ fn command_repair(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<(
     }
     if args[0] == "installer-backup" {
         return simple_transaction(paths, "repair installer-backup", |log| {
-            device::profile_check(catalog)?;
+            device::product_check(catalog)?;
             install::install_locked_cli(catalog, paths, "xpad-installer", log)?;
             Ok(vec![
                 "xpad-installer".to_string(),
@@ -654,7 +666,7 @@ fn yes_no(value: bool) -> &'static str {
 
 fn print_help() {
     println!(
-        "xpad2 {} - XPad2 fingerprint /19–/260 root-capable signed installer\n\n\
+        "xpad2 {} - XPad2 signed installer; IonStack Root on fingerprint /19–/260\n\n\
 Usage:\n  xpad2 status [--json]\n  xpad2 doctor\n  xpad2 list | info COMPONENT\n  xpad2 update [--check] [--version VERSION] [--offline DIRECTORY_OR_ZIP]\n  xpad2 root [-- COMMAND ARG...]\n  xpad2 freeze ota | unfreeze ota\n  xpad2 install [COMPONENT...]             # default: full (KSU)\n  xpad2 install cli FILE [--name NAME]\n  xpad2 install apk FILE\n  xpad2 verify [COMPONENT]\n  xpad2 repair COMPONENT\n  xpad2 cleanup\n  xpad2 logs export DIRECTORY\n  xpad2 cache path|list|verify|import DIRECTORY|prune|clear\n\n\
 Built-ins: ota, ksu, suu, ksu-manager, suu-manager, xpad-installer, installer-backup, boominstaller, full, suu-full\n\
 Global: --cache-dir DIRECTORY (or XPAD2_CACHE_DIR)\n\n\

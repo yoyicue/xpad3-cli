@@ -749,6 +749,7 @@ pub fn snapshot(catalog: &Catalog, paths: &Paths) -> DeviceStatus {
     let version = kernel_version();
     let abi = getprop("ro.product.cpu.abi");
     let fingerprint_policy = catalog.lock.profile.fingerprint_policy();
+    let product_supported = catalog.lock.matches_product_device(&fingerprint, &abi);
     let supported = catalog
         .lock
         .matches_technical_runtime(&fingerprint, &kernel, &abi);
@@ -782,6 +783,7 @@ pub fn snapshot(catalog: &Catalog, paths: &Paths) -> DeviceStatus {
         .or_else(|| transaction_warnings.first().cloned());
     DeviceStatus {
         product_version: env!("CARGO_PKG_VERSION").to_string(),
+        product_supported,
         supported,
         fingerprint_incremental: fingerprint_policy.incremental(&fingerprint),
         fingerprint,
@@ -796,7 +798,29 @@ pub fn snapshot(catalog: &Catalog, paths: &Paths) -> DeviceStatus {
     }
 }
 
-pub fn profile_check(catalog: &Catalog) -> crate::error::Result<()> {
+pub fn product_check(catalog: &Catalog) -> crate::error::Result<()> {
+    let fingerprint = getprop("ro.build.fingerprint");
+    let abi = getprop("ro.product.cpu.abi");
+    let policy = catalog.lock.profile.fingerprint_policy();
+    policy.validate()?;
+    if !policy.matches_product_family(&fingerprint) {
+        return Err(crate::error::msg(format!(
+            "unsupported XPad2 product fingerprint: expected canonical numeric incremental within {}…{}, got {}",
+            catalog.lock.profile.build_fingerprint_prefix,
+            catalog.lock.profile.build_fingerprint_suffix,
+            fingerprint
+        )));
+    }
+    if abi != catalog.lock.profile.abi {
+        return Err(crate::error::msg(format!(
+            "unsupported ABI: expected {}, got {}",
+            catalog.lock.profile.abi, abi
+        )));
+    }
+    Ok(())
+}
+
+pub fn root_profile_check(catalog: &Catalog) -> crate::error::Result<()> {
     let fingerprint = getprop("ro.build.fingerprint");
     let kernel = kernel_release();
     let abi = getprop("ro.product.cpu.abi");

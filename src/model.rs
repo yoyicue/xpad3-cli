@@ -118,6 +118,9 @@ pub struct ComponentStatus {
 #[derive(Clone, Debug, Serialize)]
 pub struct DeviceStatus {
     pub product_version: String,
+    pub product_supported: bool,
+    // Backward-compatible field: this continues to mean that the IonStack
+    // Root technical profile is supported, not merely that this is an XPad2.
     pub supported: bool,
     pub fingerprint: String,
     pub fingerprint_incremental: Option<u32>,

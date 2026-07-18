@@ -73,7 +73,7 @@ impl RootSession {
         log: &mut TransactionLog,
         preserve_existing: bool,
     ) -> Result<Self> {
-        device::profile_check(catalog)?;
+        device::root_profile_check(catalog)?;
         let started_boot_id = boot_id();
         let ota_status = ota::freeze(log)?;
         println!(
