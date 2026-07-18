@@ -551,8 +551,8 @@ mod tests {
         )))
         .unwrap();
         assert_eq!(legacy.schema, 1);
-        assert_eq!(legacy.product_version, "0.1.1");
-        assert_eq!(legacy.catalog_version, "2026-07-18.2");
+        assert_eq!(legacy.product_version, "0.1.2");
+        assert_eq!(legacy.catalog_version, "2026-07-18.3");
         assert!(legacy.profile.build_fingerprint.contains("TALIH-PD3S"));
         assert_eq!(
             legacy.profile.kernel_release_prefix,

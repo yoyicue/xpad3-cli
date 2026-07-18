@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "product_version": "0.1.1",
-  "catalog_version": "2026-07-18.2",
+  "product_version": "0.1.2",
+  "catalog_version": "2026-07-18.3",
   "profile": {
     "build_fingerprint": "alps/TALIH-PD3S/TALIH-PD3S:13/TP1A.220624.014/338:user/release-keys",
     "build_fingerprint_prefix": "",
@@ -147,9 +147,9 @@
       "id": "xpad-installer",
       "filename": "xpad-install",
       "kind": "cli",
-      "version": "0.2.10",
-      "size": 93752,
-      "sha256": "dfe061e8105199b69771e2f9dc05d92ad85538910181dc006070dadfb0a0c15e",
+      "version": "0.2.11",
+      "size": 95536,
+      "sha256": "125e55fb06e4eaf5f7dc8cf4f14a2c2830dae3ee8d3047ce30a7e47403009910",
       "embedded": true,
       "mode": 448,
       "target": "/data/local/tmp/xpad-install",
