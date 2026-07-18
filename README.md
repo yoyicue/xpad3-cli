@@ -4,7 +4,7 @@
 
 名字表示产品族，不表示所有 5.x 固件天然兼容。每台设备必须同时命中签名目录中的完整 runtime profile，CLI 才会执行 IonStack 或 KernelSU late-load。
 
-## v0.1.2 支持范围
+## v0.1.3 支持范围
 
 | Profile | 设备 | 指纹 | 内核 | 状态 |
 | --- | --- | --- | --- | --- |
@@ -63,7 +63,7 @@ adb shell /data/local/tmp/xpad3 cleanup
 
 相邻目录需要存在锁定上游工程和制品：
 
-- `../xpad2-ionstack-poc`，commit `47b201b`；
+- `../xpad2-ionstack-poc`，commit `52fe1b9`；
 - `../xpad2-ksu-lateload`，commit `c7bcd62`；
 - `../xpad2-reroot-android`、`../xpad-installer`、`../BoomInstaller`。
 

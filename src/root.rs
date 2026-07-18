@@ -86,7 +86,20 @@ impl RootSession {
             )));
         }
 
-        cleanup_stale_shell_files();
+        let stale_cleanup_warnings = cleanup_stale_shell_files();
+        if !stale_cleanup_warnings.is_empty() {
+            for warning in &stale_cleanup_warnings {
+                eprintln!(
+                    "warning: stale temporary-root artifact was preserved: {warning}; \
+                     continuing because the verified root chain replaces its client after capture"
+                );
+            }
+            log.event(
+                "root",
+                "stale-artifact-preserved",
+                json!({"warnings": stale_cleanup_warnings}),
+            )?;
+        }
         let _chain_files = ChainFilesGuard;
         let current_kernel_version = kernel_version();
         let selection = select_ionstack_profile(catalog, &current_kernel_version)?;
@@ -394,10 +407,19 @@ fn parse_holder_attempt(line: &str) -> Option<u32> {
     value.parse().ok()
 }
 
-fn cleanup_stale_shell_files() {
-    for path in [RUNNER, PERF_TARGET, PRELOAD, PROBE, SU, SOCKET, DAEMON_LOG] {
-        let _ = remove_if_exists(Path::new(path));
+fn cleanup_stale_shell_files() -> Vec<String> {
+    let paths = [RUNNER, PERF_TARGET, PRELOAD, PROBE, SU, SOCKET, DAEMON_LOG].map(Path::new);
+    cleanup_files(&paths)
+}
+
+fn cleanup_files(paths: &[&Path]) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for path in paths {
+        if let Err(error) = remove_if_exists(Path::new(path)) {
+            warnings.push(error.to_string());
+        }
     }
+    warnings
 }
 
 fn cleanup_chain_files() {
@@ -436,5 +458,22 @@ mod tests {
     fn root_argv_is_shell_quoted() {
         let command = command_from_argv(&["id".to_string(), "a b".to_string()]).unwrap();
         assert_eq!(command, "'id' 'a b'");
+    }
+
+    #[test]
+    fn stale_cleanup_reports_preserved_entries() {
+        let base = std::env::temp_dir().join(format!("xpad3-cleanup-{}", unique_id()));
+        let removable = base.join("removable");
+        let preserved = base.join("preserved-directory");
+        fs::create_dir_all(&preserved).unwrap();
+        fs::write(&removable, b"stale").unwrap();
+
+        let warnings = cleanup_files(&[removable.as_path(), preserved.as_path()]);
+
+        assert!(!removable.exists());
+        assert!(preserved.exists());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("preserved-directory"));
+        fs::remove_dir_all(base).unwrap();
     }
 }
