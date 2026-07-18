@@ -301,7 +301,11 @@ pub fn install_locked_apk(
     atomic_write(&staged, &bytes, 0o600)?;
     let identity = apk::inspect(&staged)?;
     verify_locked_apk_identity(artifact, &identity)?;
-    apk::check_arm64_compatible(&identity)?;
+    if let Some(required_abi) = artifact.native_abi.as_deref() {
+        apk::check_required_native_abi(&identity, required_abi)?;
+    } else {
+        apk::check_arm64_compatible(&identity)?;
+    }
 
     let mut changed = false;
     if !needs_activation {

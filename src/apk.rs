@@ -161,6 +161,22 @@ pub fn check_arm64_compatible(identity: &ApkIdentity) -> Result<()> {
     )))
 }
 
+pub fn check_required_native_abi(identity: &ApkIdentity, required_abi: &str) -> Result<()> {
+    if identity.native_abis.iter().any(|abi| abi == required_abi) {
+        return Ok(());
+    }
+    Err(msg(format!(
+        "APK {} has no required {} ABI ({})",
+        identity.package,
+        required_abi,
+        if identity.native_abis.is_empty() {
+            "none".to_string()
+        } else {
+            identity.native_abis.join(", ")
+        }
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +216,29 @@ mod tests {
             assert_eq!(identity.package, package);
             assert_eq!(identity.version_code, version);
             assert_eq!(identity.cert_sha256, cert);
+            if id == "ionstack-trigger" {
+                assert_eq!(identity.native_abis, ["armeabi-v7a"]);
+                check_required_native_abi(&identity, "armeabi-v7a")
+                    .expect("compat32 trigger ABI must be accepted");
+                assert!(check_arm64_compatible(&identity).is_err());
+            }
         }
+    }
+
+    #[test]
+    fn required_native_abi_does_not_accept_pure_java_or_a_different_abi() {
+        let mut identity = ApkIdentity {
+            path: "test.apk".to_string(),
+            package: "example".to_string(),
+            version_code: 1,
+            version_name: None,
+            cert_sha256: String::new(),
+            native_abis: Vec::new(),
+            apk_sha256: String::new(),
+            size: 0,
+        };
+        assert!(check_required_native_abi(&identity, "armeabi-v7a").is_err());
+        identity.native_abis.push("arm64-v8a".to_string());
+        assert!(check_required_native_abi(&identity, "armeabi-v7a").is_err());
     }
 }

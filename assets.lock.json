@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "product_version": "0.1.0",
-  "catalog_version": "2026-07-18.1",
+  "product_version": "0.1.1",
+  "catalog_version": "2026-07-18.2",
   "profile": {
     "build_fingerprint": "alps/TALIH-PD3S/TALIH-PD3S:13/TP1A.220624.014/338:user/release-keys",
     "build_fingerprint_prefix": "",
@@ -97,7 +97,8 @@
       "target": null,
       "package": "com.ionstack.trigger",
       "version_code": 1,
-      "cert_sha256": "b7e9bcde0880f9dcaec960b46bea3f9164b0c71bcc3e66a200ee266b882421a9"
+      "cert_sha256": "b7e9bcde0880f9dcaec960b46bea3f9164b0c71bcc3e66a200ee266b882421a9",
+      "native_abi": "armeabi-v7a"
     },
     {
       "id": "ksud",
@@ -139,7 +140,8 @@
       "target": null,
       "package": "me.weishu.kernelsu",
       "version_code": 32547,
-      "cert_sha256": "c371061b19d8c7d7d6133c6a9bafe198fa944e50c1b31c9d8daa8d7f1fc2d2d6"
+      "cert_sha256": "c371061b19d8c7d7d6133c6a9bafe198fa944e50c1b31c9d8daa8d7f1fc2d2d6",
+      "native_abi": "arm64-v8a"
     },
     {
       "id": "xpad-installer",
@@ -167,7 +169,8 @@
       "target": null,
       "package": "com.yoyicue.boominstaller",
       "version_code": 21,
-      "cert_sha256": "3cb5b69579d23197ced8100818a85a46b821383a504b394a44cfe3e98ade78a2"
+      "cert_sha256": "3cb5b69579d23197ced8100818a85a46b821383a504b394a44cfe3e98ade78a2",
+      "native_abi": "arm64-v8a"
     }
   ]
 }

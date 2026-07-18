@@ -151,6 +151,12 @@ impl Catalog {
                     profile.id, profile.trigger_artifact
                 )));
             }
+            if trigger.native_abi.as_deref() != Some("armeabi-v7a") {
+                return Err(msg(format!(
+                    "IonStack profile {} trigger {} must require the compat32 armeabi-v7a ABI",
+                    profile.id, profile.trigger_artifact
+                )));
+            }
         }
         Ok(Self { lock })
     }
@@ -782,6 +788,7 @@ mod tests {
             package: None,
             version_code: None,
             cert_sha256: None,
+            native_abi: None,
         };
         let lock = AssetsLock {
             schema: 1,

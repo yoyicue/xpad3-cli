@@ -71,6 +71,8 @@ pub struct Artifact {
     pub package: Option<String>,
     pub version_code: Option<u64>,
     pub cert_sha256: Option<String>,
+    #[serde(default)]
+    pub native_abi: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
