@@ -187,9 +187,9 @@ mod tests {
         for (id, package, version, cert) in [
             (
                 "ionstack-trigger",
-                "com.ionstack.trigger",
-                1,
-                "b7e9bcde0880f9dcaec960b46bea3f9164b0c71bcc3e66a200ee266b882421a9",
+                "com.ionstack.trigger.v2",
+                2,
+                "f26ae4085382d660a6844fc59aedd5b8176a8782f8dc87d6c01445fb4ef08294",
             ),
             (
                 "ksu-manager",

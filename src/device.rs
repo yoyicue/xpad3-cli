@@ -161,6 +161,8 @@ pub fn ksu_module_loaded() -> bool {
         || Path::new("/sys/module/kernelsu").exists()
 }
 
+const LEGACY_IONSTACK_TRIGGER_PACKAGES: &[&str] = &["com.ionstack.trigger"];
+
 pub fn ionstack_trigger_running(catalog: &Catalog) -> Result<bool> {
     let profile = current_root_profile(catalog)?;
     let package = catalog
@@ -168,9 +170,13 @@ pub fn ionstack_trigger_running(catalog: &Catalog) -> Result<bool> {
         .package
         .as_deref()
         .ok_or_else(|| msg("IonStack trigger artifact has no package identity"))?;
-    Ok(run("/system/bin/pidof", &[package])
-        .map(|output| output.status.success() && !output_text(&output).is_empty())
-        .unwrap_or(false))
+    Ok(std::iter::once(package)
+        .chain(LEGACY_IONSTACK_TRIGGER_PACKAGES.iter().copied())
+        .any(|candidate| {
+            run("/system/bin/pidof", &[candidate])
+                .map(|output| output.status.success() && !output_text(&output).is_empty())
+                .unwrap_or(false)
+        }))
 }
 
 pub fn cli_status(artifact: &Artifact) -> ComponentStatus {

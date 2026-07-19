@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "product_version": "0.1.7",
+  "product_version": "0.1.8",
   "sources": [
     {
       "component": "ionstack-xpad3s",
       "repository": "https://github.com/yoyicue/xpad2-ionstack-poc",
-      "commit": "62759a079008a7e0a415c25f9578ed706fc0d90c",
+      "commit": "c5e6aca2c6fc52a8c7b1596a7b474f9119e433f4",
       "local_path": "../xpad2-ionstack-poc",
       "artifact": "PD3S /338 root chain and app-domain trigger",
       "license": "GPL-3.0-or-later AND Apache-2.0"

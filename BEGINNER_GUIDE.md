@@ -1,6 +1,6 @@
 # xpad3-cli 设备端使用指南
 
-v0.1.7 只支持已经验证的 `TALIH-PD3S` `/338`。看到同为 Android 13 或 5.x 内核，不代表可以绕过 profile 检查。
+v0.1.8 只支持已经验证的 `TALIH-PD3S` `/338`。看到同为 Android 13 或 5.x 内核，不代表可以绕过 profile 检查。
 
 ## 1. 先检查，不改设备
 
@@ -55,22 +55,23 @@ adb shell /data/local/tmp/su -c id
 adb shell /data/local/tmp/xpad3 cleanup
 ```
 
-或者执行一次普通重启。不要在同一 boot 里强停或更新 `com.ionstack.trigger` 后继续叠加 Root 尝试。
+或者执行一次普通重启。不要在同一 boot 里强停或更新 `com.ionstack.trigger` / `com.ionstack.trigger.v2` 后继续叠加 Root 尝试。v0.1.8 使用独立 v2 包，旧 v1 包无需卸载。
 
-v0.1.7 可以容忍中断事务遗留的、无守护进程的 root 所有
+v0.1.8 可以容忍中断事务遗留的、无守护进程的 root 所有
 `/data/local/tmp/su`：CLI 会报告无法以 shell 身份删除它，Root 链在捕获
 credential 后再以 root 身份原子替换。这个警告本身不需要循环重启。
 
 看到 `CAPTURE_RECOVERY_WAIT` 表示写原语已经命中，runner 正在完成结果确认和
-fops/内核元数据恢复；此时不要按 Ctrl-C、关闭 ADB 窗口或杀进程。v0.1.7 会越过
-普通的 90 秒 capture 超时继续保护恢复中的 worker，直到它自行输出最终结果。
+fops/内核元数据恢复；此时不要按 Ctrl-C、关闭 ADB 窗口或杀进程。v0.1.8 会越过
+普通的 90 秒 capture 超时，找到唯一 waiter task，恢复并回读验证其内核字段，然后
+安全释放 probe。只有这一步无法验证时才会返回 75 要求重启。
 
 ## 4. 退出码 75
 
 退出码 75 表示当前 boot 的状态不适合安全重试，例如：
 
 - trigger 已驻留但 KSU 没有成功加载；
-- app-domain probe 已安全停放或超时留存，不能在同一 boot 清理或重试；
+- app-domain probe 已停放，但 runner 无法验证 waiter 修复与安全释放；
 - 已加载的 KernelSU-family 模块不是锁定版本；
 - boot ID 在事务中变化；
 - 临时 Root 或 SELinux 无法安全收尾。

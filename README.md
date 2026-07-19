@@ -4,7 +4,7 @@
 
 名字表示产品族，不表示所有 5.x 固件天然兼容。每台设备必须同时命中签名目录中的完整 runtime profile，CLI 才会执行 IonStack 或 KernelSU late-load。
 
-## v0.1.7 支持范围
+## v0.1.8 支持范围
 
 | Profile | 设备 | 指纹 | 内核 | 状态 |
 | --- | --- | --- | --- | --- |
@@ -15,7 +15,7 @@
 
 ## 已锁定链路
 
-- PD3S app-domain compat32 trigger：`com.ionstack.trigger` v1。
+- PD3S app-domain compat32 trigger：`com.ionstack.trigger.v2` v2；旧 v1 包可保留，运行中的 v1/v2 都会阻止同 boot 叠加利用。
 - PD3S IonStack runner、perf target、preload 和 chainwalk probe。
 - KernelSU 32547 / UAPI 2 / `android12-5.10` late-load，与官方同签名 Manager 32547 精确对齐，调用时带 `--allow-shell`。
 - KSU late-load 的耐重启阶段日志，以及 pstore、DropBox、AEE/MRDUMP 清单和 MTK DebugLogger 多渠道导出。
@@ -59,7 +59,7 @@ adb shell /data/local/tmp/xpad3 cleanup
 2. profile 同时选择对应 IonStack 制品、trigger APK 和 KernelSU KMI，避免跨型号错配。
 3. 如果 KSU 已在当前 boot 中健康加载，安装事务接管它，不再启动 exploit，也不更新仍可能驻留的 trigger。
 4. 如果 trigger 仍在运行但 KSU 未加载，拒绝叠加尝试并返回退出码 75。
-5. 如果 app-domain probe 已停放而 capture 已命中，runner 会先等待写入结果与 fops 恢复，绝不因 probe 退出、90 秒超时或终止信号杀死恢复中的 worker；完全未命中或恢复后未获得 Root 才返回 75。
+5. 如果 app-domain probe 已停放而 capture 已命中，runner 会定位唯一 waiter task，恢复并回读验证 `pi_blocked_on` 与 slab 元数据，再以 UID 0 信号释放 probe；只有无法验证安全退出时才以退出码 75 要求重启。
 6. APK 安装前核验包名、版本、证书、ABI、大小和哈希；不通过卸载来“修复”签名冲突。
 7. OTA freeze、boot ID、SELinux、Root 和 KSU 状态在事务末尾独立复核。
 
@@ -67,7 +67,7 @@ adb shell /data/local/tmp/xpad3 cleanup
 
 相邻目录需要存在锁定上游工程和制品：
 
-- `../xpad2-ionstack-poc`，commit `62759a0`；
+- `../xpad2-ionstack-poc`，commit `c5e6aca`；
 - `../xpad2-ksu-lateload`，commit `d25f9cc`；
 - `../xpad2-reroot-android`、`../xpad-installer`、`../BoomInstaller`。
 

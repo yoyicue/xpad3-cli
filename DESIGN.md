@@ -39,13 +39,13 @@ exact profile
   -> restore and verify SELinux Enforcing
 ```
 
-PD3S 需要 debuggable app-domain compat32 trigger。利用成功后，该进程可能仍驻留以维持链路，所以不能把 trigger APK 当成普通的随时可更新组件：
+PD3S 需要 debuggable app-domain compat32 trigger。v0.1.8 使用独立的 `com.ionstack.trigger.v2` 身份，因此不必卸载旧 v1 包；但任一代 trigger 进程正在运行时都不能叠加利用：
 
 - KSU 已加载：复用 KSU，跳过 trigger 安装和 exploit；
 - KSU 未加载且 trigger 在运行：返回 `NeedsReboot`；
 - 只有无冲突状态才允许安装锁定 trigger 并进入 Root。
 
-Runner 受 20 分钟总 deadline 和 6 轮 holder 机会限制。失败后的低价值同 boot 重试转换为普通重启要求。
+Runner 受 20 分钟总 deadline 和 6 轮 holder 机会限制。capture 命中后会验证唯一 waiter task，恢复并回读 `pi_blocked_on` 与 slab 元数据，再由 UID 0 信号释放停放的 probe；`NeedsReboot` 只保留给无法证明安全退出的兜底路径。失败后的低价值同 boot 重试仍转换为普通重启要求。
 
 ## 4. KernelSU late-load
 
@@ -79,14 +79,14 @@ runner 的退出码 75，以及旧 runner 输出中的安全停放/留存 stale-
 
 `assets.lock.json` 是执行制品锁：文件名、类型、版本、大小、SHA-256、模式、APK 身份和是否嵌入。构建脚本从相邻上游工程读取文件，验证后才写入 Rust `include_bytes!` 表。
 
-v0.1.7 将公共安装平面锁定到 xpad-installer v0.2.13 与 BoomInstaller r23。Boom 的
+v0.1.8 将公共安装平面锁定到 xpad-installer v0.2.13 与 BoomInstaller r23。Boom 的
 Root broker 保持真实 UID 0，经学而思 OEM Provider 提交 APK；随机 Provider 可读副本、
 私有 staging 和内嵌 CLI 均在事务结束后删除。ADB-shell 路径继续使用受管 0044，31317
 仍只修复 0044。
 
 `sources.lock.json` 是来源锁：IonStack、KSU port、Manager、安装器和 BoomInstaller 的仓库与 commit。PD3S 首版关键来源是：
 
-- `xpad2-ionstack-poc` `62759a0`；
+- `xpad2-ionstack-poc` `c5e6aca`；
 - `xpad2-ksu-lateload` `d25f9cc`。
 
 目录名仍带 `xpad2` 是历史仓库名，不代表 CLI 使用 4.19 XPad2 profile。
