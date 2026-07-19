@@ -4,7 +4,7 @@
 
 名字表示产品族，不表示所有 5.x 固件天然兼容。每台设备必须同时命中签名目录中的完整 runtime profile，CLI 才会执行 IonStack 或 KernelSU late-load。
 
-## v0.1.3 支持范围
+## v0.1.4 支持范围
 
 | Profile | 设备 | 指纹 | 内核 | 状态 |
 | --- | --- | --- | --- | --- |
@@ -18,6 +18,7 @@
 - PD3S app-domain compat32 trigger：`com.ionstack.trigger` v1。
 - PD3S IonStack runner、perf target、preload 和 chainwalk probe。
 - KernelSU 32551 / UAPI 2 / `android12-5.10` late-load，调用时带 `--allow-shell`。
+- KSU late-load 的耐重启阶段日志，以及 pstore、DropBox、AEE/MRDUMP 清单和 MTK DebugLogger 多渠道导出。
 - 官方 KernelSU Manager、`xpad-install`、0044 installer backup 和 BoomInstaller。
 - 所有制品在 `assets.lock.json` 中锁定大小和 SHA-256，并嵌入 arm64 CLI。
 
@@ -64,7 +65,7 @@ adb shell /data/local/tmp/xpad3 cleanup
 相邻目录需要存在锁定上游工程和制品：
 
 - `../xpad2-ionstack-poc`，commit `52fe1b9`；
-- `../xpad2-ksu-lateload`，commit `c7bcd62`；
+- `../xpad2-ksu-lateload`，commit `2515509`；
 - `../xpad2-reroot-android`、`../xpad-installer`、`../BoomInstaller`。
 
 ```sh

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "product_version": "0.1.3",
+  "product_version": "0.1.4",
   "sources": [
     {
       "component": "ionstack-xpad3s",
@@ -13,7 +13,7 @@
     {
       "component": "ksud-xpad3",
       "repository": "https://github.com/yoyicue/xpad2-ksu-lateload",
-      "commit": "c7bcd62e570d7690ae328b95557772170824c229",
+      "commit": "251550967605973c637e975bbf2b5de79513cc6b",
       "local_path": "../xpad2-ksu-lateload",
       "artifact": "ksud-xpad3s",
       "license": "GPL-3.0-only"
@@ -21,7 +21,7 @@
     {
       "component": "ksu-module",
       "repository": "https://github.com/yoyicue/xpad2-ksu-lateload",
-      "commit": "c7bcd62e570d7690ae328b95557772170824c229",
+      "commit": "251550967605973c637e975bbf2b5de79513cc6b",
       "local_path": "../xpad2-ksu-lateload",
       "artifact": "kernelsu-xpad3s-android12-5.10.ko",
       "license": "GPL-2.0-only"

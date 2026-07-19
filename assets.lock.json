@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "product_version": "0.1.3",
-  "catalog_version": "2026-07-18.4",
+  "product_version": "0.1.4",
+  "catalog_version": "2026-07-19.1",
   "profile": {
     "build_fingerprint": "alps/TALIH-PD3S/TALIH-PD3S:13/TP1A.220624.014/338:user/release-keys",
     "build_fingerprint_prefix": "",
@@ -105,8 +105,8 @@
       "filename": "ksud-xpad3",
       "kind": "internal",
       "version": "32551",
-      "size": 5827528,
-      "sha256": "e438d7d47ca9fa7ea4b8f73527309d0ad14e10ae8eded39aa9bb2af254d47cec",
+      "size": 5861808,
+      "sha256": "7075d06a731c4b0fd2a6c73a7ae0710f2824db0b6db4eff017f39f5fe32a0001",
       "embedded": true,
       "mode": 448,
       "target": null,

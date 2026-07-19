@@ -7,7 +7,7 @@ use crate::util::{
 };
 use serde_json::{Map, Value, json};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -15,6 +15,10 @@ use std::sync::{OnceLock, mpsc};
 use std::thread;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
+
+const DEBUGLOGGER_MAX_BOOT_DIRS: usize = 3;
+const LAST_KMSG_MAX_BYTES: u64 = 16 * 1024 * 1024;
+const MBLOG_HISTORY_MAX_BYTES: u64 = 2 * 1024 * 1024;
 
 pub struct TransactionLog {
     pub id: String,
@@ -192,6 +196,43 @@ impl TransactionLog {
             if success { "succeeded" } else { "failed" },
             json!({"name": name}),
         )
+    }
+
+    pub fn prepare_ksu_trace(&mut self, runtime: &str, kmi: &str) -> Result<PathBuf> {
+        let path = self.dir.join("ksu-late-load-stages.jsonl");
+        atomic_write(&path, b"", 0o600)?;
+        self.ksu_stage(
+            &path,
+            "trace-armed",
+            json!({"runtime": runtime, "kmi": kmi}),
+        )?;
+        Ok(path)
+    }
+
+    pub fn ksu_stage(&mut self, path: &Path, stage: &str, fields: Value) -> Result<()> {
+        let expected = self.dir.join("ksu-late-load-stages.jsonl");
+        if path != expected {
+            return Err(msg("invalid KSU stage trace path"));
+        }
+        let mut map = Map::new();
+        map.insert("ts".to_string(), json!(epoch_seconds()));
+        map.insert("boot_id".to_string(), json!(boot_id()));
+        map.insert("pid".to_string(), json!(std::process::id()));
+        map.insert("source".to_string(), json!("xpad3"));
+        map.insert("stage".to_string(), json!(stage));
+        if let Value::Object(extra) = fields {
+            map.extend(extra);
+        }
+        let mut line = serde_json::to_vec(&Value::Object(map))?;
+        line.push(b'\n');
+        let mut file = OpenOptions::new()
+            .append(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .at(path)?;
+        file.write_all(&line).at(path)?;
+        file.flush().at(path)?;
+        file.sync_data().at(path)
     }
 
     pub fn write_receipt(&mut self, paths: &Paths, receipt: &Receipt) -> Result<()> {
@@ -416,7 +457,8 @@ pub fn export_logs(catalog: &Catalog, paths: &Paths, destination: &Path) -> Resu
             "product_version": env!("CARGO_PKG_VERSION"),
             "boot_id": boot_id(),
             "selinux": selinux(),
-            "exported_at": epoch_seconds()
+            "exported_at": epoch_seconds(),
+            "transaction_warnings": transaction_warnings(paths)
         });
         atomic_write(
             &staging.join("summary.json"),
@@ -437,10 +479,31 @@ pub fn export_logs(catalog: &Catalog, paths: &Paths, destination: &Path) -> Resu
             &["-L", "-b", "all", "-d"],
         )?;
         capture(
+            &staging.join("logcat-kernel-current.txt"),
+            "/system/bin/logcat",
+            &["-b", "kernel", "-d"],
+        )?;
+        capture(
+            &staging.join("logcat-kernel-previous-boot.txt"),
+            "/system/bin/logcat",
+            &["-L", "-b", "kernel", "-d"],
+        )?;
+        capture(
             &staging.join("last-kmsg-dropbox.txt"),
             "/system/bin/dumpsys",
             &["dropbox", "--print", "SYSTEM_LAST_KMSG"],
         )?;
+        for (filename, tag) in [
+            ("kernel-panic-dropbox.txt", "SYSTEM_KERNEL_PANIC"),
+            ("recovery-log-dropbox.txt", "SYSTEM_RECOVERY_LOG"),
+            ("restart-dropbox.txt", "SYSTEM_RESTART"),
+        ] {
+            capture(
+                &staging.join(filename),
+                "/system/bin/dumpsys",
+                &["dropbox", "--print", tag],
+            )?;
+        }
         capture(
             &staging.join("system-server-crash-dropbox.txt"),
             "/system/bin/dumpsys",
@@ -467,6 +530,48 @@ pub fn export_logs(catalog: &Catalog, paths: &Paths, destination: &Path) -> Resu
             &["-A", "-o", "USER,UID,PID,PPID,NAME"],
         )?;
         capture(&staging.join("dmesg.txt"), "/system/bin/dmesg", &[])?;
+        capture(
+            &staging.join("boot-reason.txt"),
+            "/system/bin/sh",
+            &[
+                "-c",
+                "for key in ro.boot.bootreason sys.boot.reason persist.sys.boot.reason ro.bootmode ro.boot.slot_suffix; do printf '%s=' \"$key\"; getprop \"$key\"; done; printf 'kernel_tainted='; cat /proc/sys/kernel/tainted 2>&1; printf 'cmdline='; cat /proc/cmdline 2>&1",
+            ],
+        )?;
+        capture(
+            &staging.join("bootstat.txt"),
+            "/system/bin/dumpsys",
+            &["bootstat"],
+        )?;
+        capture(
+            &staging.join("proc-last-kmsg.txt"),
+            "/system/bin/cat",
+            &["/proc/last_kmsg"],
+        )?;
+        capture(
+            &staging.join("pstore-inventory.txt"),
+            "/system/bin/sh",
+            &[
+                "-c",
+                "ls -la /sys/fs/pstore 2>&1; ls -la /proc/last_kmsg 2>&1",
+            ],
+        )?;
+        capture(
+            &staging.join("aee-mrdump-inventory.txt"),
+            "/system/bin/sh",
+            &[
+                "-c",
+                "for root in /data/aee_exp /data/vendor/aee_exp /data/mrdump /data/vendor/mrdump /data/misc/mrdump; do echo ===$root===; ls -la \"$root\" 2>&1; done",
+            ],
+        )?;
+        capture(
+            &staging.join("debuglogger-inventory.txt"),
+            "/system/bin/sh",
+            &[
+                "-c",
+                "for root in /sdcard/debuglogger/mobilelog /storage/emulated/0/debuglogger/mobilelog; do echo ===$root===; find \"$root\" -maxdepth 2 -type f 2>&1 | grep -E '/(last_kmsg|mblog_history)$'; done",
+            ],
+        )?;
         if Path::new("/data/local/tmp/xpad-install").is_file() {
             match catalog
                 .artifact("xpad-installer")
@@ -531,6 +636,31 @@ pub fn export_logs(catalog: &Catalog, paths: &Paths, destination: &Path) -> Resu
             &["package", "com.tal.init.ota"],
         )?;
 
+        let debuglogger_evidence = collect_debuglogger_evidence(&[
+            PathBuf::from("/sdcard/debuglogger/mobilelog"),
+            PathBuf::from("/storage/emulated/0/debuglogger/mobilelog"),
+        ]);
+        let debuglogger_manifest = if debuglogger_evidence.is_empty() {
+            "No readable APLog last_kmsg or mblog_history evidence was found.\n".to_string()
+        } else {
+            let mut manifest = String::from("source\tbytes\tarchive_path\tmaximum_bytes\n");
+            for evidence in &debuglogger_evidence {
+                manifest.push_str(&format!(
+                    "{}\t{}\t{}\t{}\n",
+                    evidence.source.display(),
+                    evidence.size,
+                    evidence.archive_path,
+                    evidence.maximum_bytes
+                ));
+            }
+            manifest
+        };
+        atomic_write(
+            &staging.join("debuglogger-evidence.txt"),
+            debuglogger_manifest.as_bytes(),
+            0o600,
+        )?;
+
         let output = destination.join(format!("xpad3log-{}.zip", timestamp_filename()));
         let file = File::create(&output).at(&output)?;
         let mut zip = ZipWriter::new(file);
@@ -556,6 +686,9 @@ pub fn export_logs(catalog: &Catalog, paths: &Paths, destination: &Path) -> Resu
         if Path::new("/sys/fs/pstore").is_dir() {
             let _ = add_tree(&mut zip, Path::new("/sys/fs/pstore"), "pstore", options);
         }
+        for evidence in &debuglogger_evidence {
+            let _ = add_limited_redacted_file(&mut zip, evidence, options);
+        }
         zip.finish()?;
         Ok(output)
     })();
@@ -578,6 +711,114 @@ fn capture(path: &Path, program: &str, args: &[&str]) -> Result<()> {
     };
     let redacted = text.lines().map(redact).collect::<Vec<_>>().join("\n");
     atomic_write(path, redacted.as_bytes(), 0o600)
+}
+
+#[derive(Debug)]
+struct DebugloggerEvidence {
+    source: PathBuf,
+    archive_path: String,
+    size: u64,
+    maximum_bytes: u64,
+}
+
+fn collect_debuglogger_evidence(roots: &[PathBuf]) -> Vec<DebugloggerEvidence> {
+    for root in roots {
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
+        let mut boot_dirs = entries
+            .flatten()
+            .filter(|entry| {
+                entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false)
+                    && entry.file_name().to_string_lossy().starts_with("APLog_")
+            })
+            .collect::<Vec<_>>();
+        boot_dirs.sort_by_key(|entry| std::cmp::Reverse(entry.file_name()));
+        let mut evidence = Vec::new();
+        for boot_dir in boot_dirs.into_iter().take(DEBUGLOGGER_MAX_BOOT_DIRS) {
+            let boot_name = sanitize_zip_component(&boot_dir.file_name().to_string_lossy());
+            for (filename, maximum_bytes) in [
+                ("last_kmsg", LAST_KMSG_MAX_BYTES),
+                ("mblog_history", MBLOG_HISTORY_MAX_BYTES),
+            ] {
+                let source = boot_dir.path().join(filename);
+                let Ok(metadata) = fs::symlink_metadata(&source) else {
+                    continue;
+                };
+                if !metadata.is_file() {
+                    continue;
+                }
+                let suffix = if metadata.len() > maximum_bytes {
+                    ".tail"
+                } else {
+                    ""
+                };
+                evidence.push(DebugloggerEvidence {
+                    archive_path: format!("debuglogger/{boot_name}/{filename}{suffix}"),
+                    source,
+                    size: metadata.len(),
+                    maximum_bytes,
+                });
+            }
+        }
+        if !evidence.is_empty() {
+            return evidence;
+        }
+    }
+    Vec::new()
+}
+
+fn sanitize_zip_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn add_limited_redacted_file(
+    zip: &mut ZipWriter<File>,
+    evidence: &DebugloggerEvidence,
+    options: SimpleFileOptions,
+) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&evidence.source)
+        .at(&evidence.source)?;
+    let metadata = file.metadata().at(&evidence.source)?;
+    if !metadata.is_file() {
+        return Err(msg(format!(
+            "DebugLogger evidence changed type: {}",
+            evidence.source.display()
+        )));
+    }
+    let offset = metadata.len().saturating_sub(evidence.maximum_bytes);
+    if offset > 0 {
+        file.seek(SeekFrom::Start(offset)).at(&evidence.source)?;
+    }
+    let mut data = Vec::new();
+    file.take(evidence.maximum_bytes)
+        .read_to_end(&mut data)
+        .at(&evidence.source)?;
+    let text = String::from_utf8_lossy(&data);
+    let mut redacted = String::new();
+    if offset > 0 {
+        redacted.push_str(&format!(
+            "[xpad3: retained the final {} of {} bytes]\n",
+            evidence.maximum_bytes,
+            metadata.len()
+        ));
+    }
+    redacted.push_str(&text.lines().map(redact).collect::<Vec<_>>().join("\n"));
+    zip.start_file(&evidence.archive_path, options)?;
+    zip.write_all(redacted.as_bytes())
+        .map_err(|error| msg(format!("write DebugLogger evidence to ZIP: {error}")))
 }
 
 fn add_tree(
@@ -696,6 +937,62 @@ mod tests {
         assert!(raw.contains("phase-one"));
         assert!(raw.contains("phase-two"));
         drop(log);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ksu_stage_trace_is_valid_and_durable_jsonl() {
+        let root = std::env::temp_dir().join(format!("xpad3-ksu-trace-test-{}", unique_id()));
+        let paths = Paths {
+            root: root.clone(),
+            cache: root.join("cache"),
+            cache_is_explicit: false,
+            managed_blob_root: root.join("cache").join("blobs"),
+            managed_cache_root: root.join("cache").join("releases"),
+            work: root.join("work"),
+            state: root.join("state"),
+            logs: root.join("logs"),
+            lock: root.join("operation.lock"),
+        };
+        let mut log = TransactionLog::start(&paths, "ksu trace test").expect("start transaction");
+        let trace = log
+            .prepare_ksu_trace("ksu", "android12-5.10")
+            .expect("prepare KSU trace");
+        log.ksu_stage(&trace, "runtime-verified", json!({"version": "32551"}))
+            .expect("append KSU stage");
+        let lines = fs::read_to_string(trace).expect("read KSU trace");
+        let records = lines
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("valid JSONL record"))
+            .collect::<Vec<_>>();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["stage"], "trace-armed");
+        assert_eq!(records[1]["stage"], "runtime-verified");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn debuglogger_collection_keeps_only_three_newest_boots() {
+        let root = std::env::temp_dir().join(format!("xpad3-debuglogger-test-{}", unique_id()));
+        for number in 1..=4 {
+            let dir = root.join(format!("APLog_20260719_00000{number}"));
+            fs::create_dir_all(&dir).expect("create APLog directory");
+            fs::write(dir.join("last_kmsg"), format!("boot {number}\n")).expect("write last_kmsg");
+            fs::write(dir.join("mblog_history"), format!("history {number}\n"))
+                .expect("write mblog_history");
+        }
+        let evidence = collect_debuglogger_evidence(std::slice::from_ref(&root));
+        assert_eq!(evidence.len(), 6);
+        assert!(
+            evidence
+                .iter()
+                .all(|item| !item.archive_path.contains("000001"))
+        );
+        assert!(
+            evidence
+                .iter()
+                .any(|item| item.archive_path.contains("000004/last_kmsg"))
+        );
         let _ = fs::remove_dir_all(root);
     }
 

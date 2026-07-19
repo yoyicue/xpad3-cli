@@ -15,6 +15,14 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
+const XPAD3_KSU_TRACE_PROTOCOL: &[u8] = b"XPAD3_KSU_TRACE_V1";
+
+fn loader_supports_stage_trace(bytes: &[u8]) -> bool {
+    bytes
+        .windows(XPAD3_KSU_TRACE_PROTOCOL.len())
+        .any(|window| window == XPAD3_KSU_TRACE_PROTOCOL)
+}
+
 pub fn install_locked_cli(
     catalog: &Catalog,
     paths: &Paths,
@@ -159,6 +167,7 @@ pub fn ensure_runtime(
         .ok_or_else(|| msg(format!("unknown runtime: {runtime_id}")))?;
     let resolved = catalog.resolve(spec.loader_artifact, paths)?;
     let bytes = verified_bytes(&resolved)?;
+    let loader_supports_stage_trace = loader_supports_stage_trace(&bytes);
     let diagnostic = paths.state.join(spec.diagnostic_filename);
     atomic_write(&diagnostic, &bytes, 0o700)?;
     let before = device::runtime_status(paths, spec);
@@ -190,17 +199,53 @@ pub fn ensure_runtime(
         .to_str()
         .ok_or_else(|| msg("invalid runtime diagnostic path"))?;
     let kmi = device::current_root_profile(catalog)?.ksu_kmi.as_str();
+    let trace_path = log.prepare_ksu_trace(spec.id, kmi)?;
+    let trace_path_text = trace_path
+        .to_str()
+        .ok_or_else(|| msg("invalid KSU stage trace path"))?;
     let mut command = format!("{} late-load --kmi {}", shell_quote(path), shell_quote(kmi));
     for argument in spec.late_load_args {
         command.push(' ');
         command.push_str(&shell_quote(argument));
+    }
+    if loader_supports_stage_trace {
+        command.push_str(" --trace-file ");
+        command.push_str(&shell_quote(trace_path_text));
+    } else {
+        log.ksu_stage(
+            &trace_path,
+            "loader-trace-unavailable",
+            json!({"loader": spec.loader_artifact}),
+        )?;
     }
     log.event(
         "component",
         "running",
         json!({"id": spec.id, "action": "late-load", "runtime": spec.display_name}),
     )?;
-    let output = root.exec(&command)?;
+    log.ksu_stage(
+        &trace_path,
+        "root-dispatch-enter",
+        json!({"runtime": spec.id}),
+    )?;
+    let output = match root.exec(&command) {
+        Ok(output) => {
+            log.ksu_stage(
+                &trace_path,
+                "root-dispatch-returned",
+                json!({"exit_code": output.status}),
+            )?;
+            output
+        }
+        Err(error) => {
+            log.ksu_stage(
+                &trace_path,
+                "root-dispatch-failed",
+                json!({"error": error.to_string()}),
+            )?;
+            return Err(error);
+        }
+    };
     log.command_result(
         &format!("{} late-load", spec.id),
         output.status == 0,
@@ -221,6 +266,11 @@ pub fn ensure_runtime(
         "waiting",
         json!({"id": spec.id, "deadline_seconds": 30}),
     )?;
+    log.ksu_stage(
+        &trace_path,
+        "runtime-wait-enter",
+        json!({"deadline_seconds": 30}),
+    )?;
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut after = device::runtime_status(paths, spec);
     while after.state != ComponentState::Active && Instant::now() < deadline {
@@ -230,6 +280,11 @@ pub fn ensure_runtime(
     }
     if after.state != ComponentState::Active {
         let detail = after.detail.unwrap_or_default();
+        log.ksu_stage(
+            &trace_path,
+            "runtime-verification-failed",
+            json!({"detail": detail}),
+        )?;
         if device::ksu_module_loaded() {
             return Err(needs_reboot(format!(
                 "{} is resident but failed locked debug-info verification: {detail}",
@@ -245,6 +300,11 @@ pub fn ensure_runtime(
         "component",
         "active",
         json!({"id": spec.id, "version": spec.version, "runtime": "late-load"}),
+    )?;
+    log.ksu_stage(
+        &trace_path,
+        "runtime-verified",
+        json!({"runtime": spec.id, "version": spec.version}),
     )?;
     println!(
         "✓ {}: {} / {} / late-load 已验证",
@@ -601,7 +661,9 @@ pub fn cleanup_work(paths: &Paths) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apk_install_plan, boom_starter_path, classify_installer_error};
+    use super::{
+        apk_install_plan, boom_starter_path, classify_installer_error, loader_supports_stage_trace,
+    };
     use std::path::Path;
 
     #[test]
@@ -631,5 +693,11 @@ mod tests {
         assert!(!error.requires_reboot());
         assert!(error.to_string().contains("xpad3 status"));
         assert!(error.to_string().contains("Do not repeat install"));
+    }
+
+    #[test]
+    fn ksu_stage_trace_is_enabled_only_by_the_explicit_loader_protocol() {
+        assert!(loader_supports_stage_trace(b"ELF...XPAD3_KSU_TRACE_V1..."));
+        assert!(!loader_supports_stage_trace(b"ELF...trace-file..."));
     }
 }

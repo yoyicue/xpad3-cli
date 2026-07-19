@@ -1,6 +1,6 @@
 # xpad3-cli 设备端使用指南
 
-v0.1.3 只支持已经验证的 `TALIH-PD3S` `/338`。看到同为 Android 13 或 5.x 内核，不代表可以绕过 profile 检查。
+v0.1.4 只支持已经验证的 `TALIH-PD3S` `/338`。看到同为 Android 13 或 5.x 内核，不代表可以绕过 profile 检查。
 
 ## 1. 先检查，不改设备
 
@@ -53,7 +53,7 @@ adb shell /data/local/tmp/xpad3 cleanup
 
 或者执行一次普通重启。不要在同一 boot 里强停或更新 `com.ionstack.trigger` 后继续叠加 Root 尝试。
 
-v0.1.3 可以容忍中断事务遗留的、无守护进程的 root 所有
+v0.1.4 可以容忍中断事务遗留的、无守护进程的 root 所有
 `/data/local/tmp/su`：CLI 会报告无法以 shell 身份删除它，Root 链在捕获
 credential 后再以 root 身份原子替换。这个警告本身不需要循环重启。
 
@@ -70,10 +70,23 @@ credential 后再以 root 身份原子替换。这个警告本身不需要循环
 
 ## 5. 导出日志
 
+如果 KSU late-load 过程中设备意外重启，等系统完全开机后不要先重跑 Root，直接导出：
+
 ```sh
 adb shell mkdir -p /sdcard/xpad3-logs
 adb shell /data/local/tmp/xpad3 logs export /sdcard/xpad3-logs
 adb pull /sdcard/xpad3-logs
 ```
 
-日志会做常见序列号和凭据脱敏。导出后仍应人工检查，再发送给他人。
+ZIP 会保留中断事务及 `ksu-late-load-stages.jsonl`。最后一条阶段如果是
+`init-module-enter`、但没有 `init-module-returned`，说明重启发生在内核模块初始化
+调用内；若已经返回，则继续看后续 userspace 阶段。
+
+导出还会同时尝试当前/上一 boot 的 logcat、DropBox kernel/restart 记录、pstore、
+`/proc/last_kmsg`、AEE/MRDUMP 目录清单，以及 MTK DebugLogger 最近三个
+`APLog_*` 中的 `last_kmsg` 和 `mblog_history`。AEE 数据目录通常不允许 shell
+直接读取，所以清单显示 `Permission denied` 并不代表没有异常记录；DebugLogger 的
+`last_kmsg` 是重要的非 Root 兜底渠道。
+
+日志会做常见序列号和凭据脱敏，并限制 DebugLogger 单文件大小。导出后仍应人工
+检查，再发送给他人。
