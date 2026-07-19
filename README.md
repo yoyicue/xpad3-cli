@@ -4,7 +4,7 @@
 
 名字表示产品族，不表示所有 5.x 固件天然兼容。每台设备必须同时命中签名目录中的完整 runtime profile，CLI 才会执行 IonStack 或 KernelSU late-load。
 
-## v0.1.5 支持范围
+## v0.1.6 支持范围
 
 | Profile | 设备 | 指纹 | 内核 | 状态 |
 | --- | --- | --- | --- | --- |
@@ -57,7 +57,7 @@ adb shell /data/local/tmp/xpad3 cleanup
 2. profile 同时选择对应 IonStack 制品、trigger APK 和 KernelSU KMI，避免跨型号错配。
 3. 如果 KSU 已在当前 boot 中健康加载，安装事务接管它，不再启动 exploit，也不更新仍可能驻留的 trigger。
 4. 如果 trigger 仍在运行但 KSU 未加载，拒绝叠加尝试并返回退出码 75。
-5. 如果 app-domain probe 安全停放或超时后被刻意留存，runner 立即返回 75，事务回执记录 `needs_reboot=true`。
+5. 如果 app-domain probe 已停放而 capture 已命中，runner 会先等待写入结果与 fops 恢复，绝不因 probe 退出、90 秒超时或终止信号杀死恢复中的 worker；完全未命中或恢复后未获得 Root 才返回 75。
 6. APK 安装前核验包名、版本、证书、ABI、大小和哈希；不通过卸载来“修复”签名冲突。
 7. OTA freeze、boot ID、SELinux、Root 和 KSU 状态在事务末尾独立复核。
 
@@ -65,7 +65,7 @@ adb shell /data/local/tmp/xpad3 cleanup
 
 相邻目录需要存在锁定上游工程和制品：
 
-- `../xpad2-ionstack-poc`，commit `6c72443`；
+- `../xpad2-ionstack-poc`，commit `62759a0`；
 - `../xpad2-ksu-lateload`，commit `d25f9cc`；
 - `../xpad2-reroot-android`、`../xpad-installer`、`../BoomInstaller`。
 
