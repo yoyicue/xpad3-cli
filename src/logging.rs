@@ -958,7 +958,7 @@ mod tests {
         let trace = log
             .prepare_ksu_trace("ksu", "android12-5.10")
             .expect("prepare KSU trace");
-        log.ksu_stage(&trace, "runtime-verified", json!({"version": "32551"}))
+        log.ksu_stage(&trace, "runtime-verified", json!({"version": "32547"}))
             .expect("append KSU stage");
         let lines = fs::read_to_string(trace).expect("read KSU trace");
         let records = lines

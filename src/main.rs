@@ -147,7 +147,7 @@ fn command_status(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<(
 
 fn command_list(catalog: &Catalog) {
     println!("ota              policy   freeze supported XPad3 system OTA package for user 0");
-    println!("ksu              runtime  KernelSU 32551 / UAPI 2 / android12-5.10 / current boot");
+    println!("ksu              runtime  KernelSU 32547 / UAPI 2 / android12-5.10 / current boot");
     println!("ionstack-trigger internal profile-managed trigger; never installed standalone");
     println!("installer-backup policy   managed 0044 device-OEM fallback installer");
     for id in ["ksu-manager", "xpad-installer", "boominstaller"] {
@@ -178,7 +178,7 @@ fn command_info(catalog: &Catalog, paths: &Paths, args: &[String]) -> Result<()>
     }
     if id == "ksu" {
         println!(
-            "id: ksu\nkind: runtime\nversion: 32551\nuapi: 2\nkmi: android12-5.10\nlate-load: --allow-shell\nlifecycle: current-boot"
+            "id: ksu\nkind: runtime\nversion: 32547\nuapi: 2\nkmi: android12-5.10\nlate-load: --allow-shell\nlifecycle: current-boot"
         );
         render_component(&device::ksu_status(paths));
         return Ok(());

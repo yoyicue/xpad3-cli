@@ -13,7 +13,7 @@
     {
       "component": "ksud-xpad3",
       "repository": "https://github.com/yoyicue/xpad2-ksu-lateload",
-      "commit": "251550967605973c637e975bbf2b5de79513cc6b",
+      "commit": "d25f9cce125b2f414447ba053c6b6742bb9fea7e",
       "local_path": "../xpad2-ksu-lateload",
       "artifact": "ksud-xpad3s",
       "license": "GPL-3.0-only"
@@ -21,7 +21,7 @@
     {
       "component": "ksu-module",
       "repository": "https://github.com/yoyicue/xpad2-ksu-lateload",
-      "commit": "251550967605973c637e975bbf2b5de79513cc6b",
+      "commit": "d25f9cce125b2f414447ba053c6b6742bb9fea7e",
       "local_path": "../xpad2-ksu-lateload",
       "artifact": "kernelsu-xpad3s-android12-5.10.ko",
       "license": "GPL-2.0-only"

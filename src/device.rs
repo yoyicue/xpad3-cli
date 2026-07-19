@@ -30,9 +30,9 @@ pub const KSU_RUNTIME: RuntimeSpec = RuntimeSpec {
     diagnostic_filename: "ksud-xpad3",
     diagnostic_fallback: "/data/local/tmp/ksud-xpad3s",
     late_load_args: &["--allow-shell"],
-    version: 32551,
+    version: 32547,
     expected_info: &[
-        "version: 32551",
+        "version: 32547",
         "uapi_version: 2",
         "flags: 0x5",
         "features: 0x5",

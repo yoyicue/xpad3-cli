@@ -38,6 +38,10 @@ adb shell /data/local/tmp/xpad3 info ksu
 adb shell /data/local/tmp/xpad3 verify ksu
 ```
 
+Manager 与驱动应同时显示 `32547`。若仍显示 Manager `32525` / 驱动 `32551`，说明
+设备仍运行旧组合：先普通重启清除非持久的 late-load 驱动，再用本版本执行完整安装；
+不要在同一 boot 内尝试把 32551 在线替换为 32547。
+
 ## 3. 仅使用临时 Root
 
 ```sh
