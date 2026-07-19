@@ -26,7 +26,8 @@ DELTA_BASE_VERSION=${XPAD3_DELTA_BASE_VERSION:-}
 if [[ -z "$DELTA_BASE_VERSION" && "$VERSION" != "0.1.0" ]]; then
   while IFS= read -r tag; do
     candidate=${tag#v}
-    if [[ "$candidate" != "$VERSION" ]]; then
+    if [[ "$candidate" != "$VERSION" && \
+      -f "$DIST/xpad3-v$candidate-android-arm64" ]]; then
       DELTA_BASE_VERSION=$candidate
       break
     fi
@@ -69,7 +70,7 @@ source_for() {
     ksud) printf '%s\n' "$PARENT/xpad2-ksu-lateload/artifacts/ksud-xpad3s" ;;
     ksu-manager) printf '%s\n' "$PARENT/xpad2-reroot-android/app/src/main/res/raw/kernelsu_manager_v3_2_5_22_gccfee6dc_32547.apk" ;;
     xpad-installer) printf '%s\n' "$PARENT/xpad-installer/dist/xpad-install" ;;
-    boominstaller) printf '%s\n' "$PARENT/BoomInstaller/out/apk/BoomInstaller-v13.6.0.r23.ffa4217-production.apk" ;;
+    boominstaller) printf '%s\n' "$PARENT/BoomInstaller/out/apk/BoomInstaller-v13.6.0.r24.2f6e7c2-production.apk" ;;
     *) return 1 ;;
   esac
 }

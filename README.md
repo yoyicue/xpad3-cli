@@ -4,7 +4,7 @@
 
 名字表示产品族，不表示所有 5.x 固件天然兼容。每台设备必须同时命中签名目录中的完整 runtime profile，CLI 才会执行 IonStack 或 KernelSU late-load。
 
-## v0.1.8 支持范围
+## v0.1.9 支持范围
 
 | Profile | 设备 | 指纹 | 内核 | 状态 |
 | --- | --- | --- | --- | --- |
@@ -19,8 +19,9 @@
 - PD3S IonStack runner、perf target、preload 和 chainwalk probe。
 - KernelSU 32547 / UAPI 2 / `android12-5.10` late-load，与官方同签名 Manager 32547 精确对齐，调用时带 `--allow-shell`。
 - KSU late-load 的耐重启阶段日志，以及 pstore、DropBox、AEE/MRDUMP 清单和 MTK DebugLogger 多渠道导出。
-- 官方 KernelSU Manager、`xpad-install` v0.2.13、0044 installer backup 和
-  BoomInstaller v13.6.0.r23.ffa4217。Boom 在 Root 模式保持真实 UID 0 并通过学而思
+- 官方 KernelSU Manager、`xpad-install` v0.2.14、0044 installer backup 和
+  BoomInstaller v13.6.0.r24.2f6e7c2。APK/DEX 暂存文件逐事务唯一，上次中断留下的
+  只读文件不会阻断下一次安装。Boom 在 Root 模式保持真实 UID 0 并通过学而思
   OEM Provider 安装；ADB-shell 模式继续使用受管 0044。
 - 所有制品在 `assets.lock.json` 中锁定大小和 SHA-256，并嵌入 arm64 CLI。
 
@@ -78,9 +79,16 @@ adb shell /data/local/tmp/xpad3 cleanup
 
 ```sh
 ./tools/build_android.sh
+./tools/verify_sources.sh
+./tools/package_release.sh
+./tools/verify_release.sh
 ```
 
 输出为 `target/aarch64-linux-android/release/xpad3`。构建脚本会先运行全部 Rust 测试，再从相邻工程读取制品，并在嵌入前逐一核验锁定大小和 SHA-256。
+
+发布签名默认使用 `~/.android/keys` 中的加密托管材料和 `~/.ssh` 中固定指纹的恢复密钥；
+若要直接从已挂载冷备签名，可设置 `XPAD3_RELEASE_SIGNING_BACKUP`。两条路径都会核验
+证书、恢复公钥与 catalog 公钥身份，冷备模式还会完整校验 `SHA256SUMS`。
 
 ## 新型号接入规则
 

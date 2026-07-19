@@ -84,6 +84,10 @@ Root broker 保持真实 UID 0，经学而思 OEM Provider 提交 APK；随机 P
 私有 staging 和内嵌 CLI 均在事务结束后删除。ADB-shell 路径继续使用受管 0044，31317
 仍只修复 0044。
 
+v0.1.9 将公共安装平面升级到 xpad-installer v0.2.14 与 BoomInstaller r24。APK 与 DEX
+暂存改为逐事务唯一文件名并在成功或失败后清理，历史只读残留不再让下一次安装提前以
+staging I/O 错误退出；PD3S Root profile、trigger、IonStack 与 KSU 制品保持不变。
+
 `sources.lock.json` 是来源锁：IonStack、KSU port、Manager、安装器和 BoomInstaller 的仓库与 commit。PD3S 首版关键来源是：
 
 - `xpad2-ionstack-poc` `c5e6aca`；
