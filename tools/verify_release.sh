@@ -4,12 +4,13 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 VERSION=$(awk -F '"' '/^version = / {print $2; exit}' "$ROOT/Cargo.toml")
 DIST="$ROOT/dist"
+IONSTACK_SOURCE=${XPAD3_IONSTACK_SOURCE:-$ROOT/../xpad2-ionstack-poc}
 tmp_dir=$(mktemp -d /tmp/xpad3-release-verify.XXXXXX)
 trap 'rm -rf "$tmp_dir"' EXIT
 
 ionstack_commit=$(jq -r '.sources[] | select(.component == "ionstack-xpad3s") | .commit' \
   "$ROOT/sources.lock.json")
-[[ "$(git -C "$ROOT/../xpad2-ionstack-poc" rev-parse HEAD)" == "$ionstack_commit" ]] || {
+[[ "$(git -C "$IONSTACK_SOURCE" rev-parse HEAD)" == "$ionstack_commit" ]] || {
   printf 'local IonStack source does not match sources.lock.json\n' >&2
   exit 1
 }

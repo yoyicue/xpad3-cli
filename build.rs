@@ -25,21 +25,24 @@ fn candidate_paths(manifest: &Path, artifact_dir: Option<&Path>, a: &Artifact) -
         paths.push(dir.join(&a.id));
     }
     let parent = manifest.parent().unwrap_or(manifest);
+    let ionstack_source = env::var_os("XPAD3_IONSTACK_SOURCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| parent.join("xpad2-ionstack-poc"));
     let mapped = match a.id.as_str() {
         "ionstack-runner" => {
-            Some(parent.join("xpad2-ionstack-poc/build/ionstack_reroot_device"))
+            Some(ionstack_source.join("build/ionstack_reroot_device"))
         }
         "ionstack-perf-target" => {
-            Some(parent.join("xpad2-ionstack-poc/build/ionstack_perf_target"))
+            Some(ionstack_source.join("build/ionstack_perf_target"))
         }
         "ionstack-preload" => {
-            Some(parent.join("xpad2-ionstack-poc/build/ionstack_preload.so"))
+            Some(ionstack_source.join("build/ionstack_preload.so"))
         }
         "ionstack-chainwalk-probe" => Some(
-            parent.join("xpad2-ionstack-poc/build/cve_2026_43499_chainwalk_probe_arm32"),
+            ionstack_source.join("build/cve_2026_43499_chainwalk_probe_arm32"),
         ),
         "ionstack-trigger" => {
-            Some(parent.join("xpad2-ionstack-poc/build/ionstack_trigger_app.apk"))
+            Some(ionstack_source.join("build/ionstack_trigger_app.apk"))
         }
         "ksud" => Some(parent.join("xpad2-ksu-lateload/artifacts/ksud-xpad3s")),
         "ksu-manager" => {
@@ -49,7 +52,7 @@ fn candidate_paths(manifest: &Path, artifact_dir: Option<&Path>, a: &Artifact) -
         }
         "xpad-installer" => Some(parent.join("xpad-installer/dist/xpad-install")),
         "boominstaller" => Some(
-            parent.join("BoomInstaller/out/apk/BoomInstaller-v13.6.0.r21.07a5812-production.apk"),
+            parent.join("BoomInstaller/out/apk/BoomInstaller-v13.6.0.r23.ffa4217-production.apk"),
         ),
         _ => None,
     };
@@ -62,6 +65,7 @@ fn candidate_paths(manifest: &Path, artifact_dir: Option<&Path>, a: &Artifact) -
 fn main() {
     println!("cargo:rerun-if-changed=assets.lock.json");
     println!("cargo:rerun-if-env-changed=XPAD3_ARTIFACT_DIR");
+    println!("cargo:rerun-if-env-changed=XPAD3_IONSTACK_SOURCE");
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let lock_path = manifest.join("assets.lock.json");
     let raw = fs::read(&lock_path).expect("read assets.lock.json");

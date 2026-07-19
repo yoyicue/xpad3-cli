@@ -4,7 +4,7 @@
 
 名字表示产品族，不表示所有 5.x 固件天然兼容。每台设备必须同时命中签名目录中的完整 runtime profile，CLI 才会执行 IonStack 或 KernelSU late-load。
 
-## v0.1.6 支持范围
+## v0.1.7 支持范围
 
 | Profile | 设备 | 指纹 | 内核 | 状态 |
 | --- | --- | --- | --- | --- |
@@ -19,7 +19,9 @@
 - PD3S IonStack runner、perf target、preload 和 chainwalk probe。
 - KernelSU 32547 / UAPI 2 / `android12-5.10` late-load，与官方同签名 Manager 32547 精确对齐，调用时带 `--allow-shell`。
 - KSU late-load 的耐重启阶段日志，以及 pstore、DropBox、AEE/MRDUMP 清单和 MTK DebugLogger 多渠道导出。
-- 官方 KernelSU Manager、`xpad-install`、0044 installer backup 和 BoomInstaller。
+- 官方 KernelSU Manager、`xpad-install` v0.2.13、0044 installer backup 和
+  BoomInstaller v13.6.0.r23.ffa4217。Boom 在 Root 模式保持真实 UID 0 并通过学而思
+  OEM Provider 安装；ADB-shell 模式继续使用受管 0044。
 - 所有制品在 `assets.lock.json` 中锁定大小和 SHA-256，并嵌入 arm64 CLI。
 
 ## 常用命令
@@ -68,6 +70,11 @@ adb shell /data/local/tmp/xpad3 cleanup
 - `../xpad2-ionstack-poc`，commit `62759a0`；
 - `../xpad2-ksu-lateload`，commit `d25f9cc`；
 - `../xpad2-reroot-android`、`../xpad-installer`、`../BoomInstaller`。
+
+共享的 PoC checkout 若正在其他分支开发，可设置
+`XPAD3_IONSTACK_SOURCE=/path/to/locked/worktree`；构建、来源验证和发布验证都会使用该
+隔离 worktree，不会要求覆盖当前工作目录。预构建制品也可通过
+`XPAD3_ARTIFACT_DIR=/path/to/artifacts` 提供，大小与 SHA-256 仍按 catalog 复验。
 
 ```sh
 ./tools/build_android.sh

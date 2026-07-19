@@ -1,6 +1,6 @@
 [package]
 name = "xpad3"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 license = "GPL-3.0-or-later"
 description = "Profile-gated root installer for the modern-kernel XPad3 family"

@@ -124,8 +124,12 @@ done < <(jq -r '.sources[] | select(has("tag")) |
   @tsv' "$LOCK" | sort -u)
 
 while IFS=$'\t' read -r repository expected local_path; do
-  source_dir="$ROOT/$local_path"
-  [[ -d "$source_dir/.git" ]] || {
+  if [[ "$local_path" == "../xpad2-ionstack-poc" && -n ${XPAD3_IONSTACK_SOURCE:-} ]]; then
+    source_dir=$XPAD3_IONSTACK_SOURCE
+  else
+    source_dir="$ROOT/$local_path"
+  fi
+  git -C "$source_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
     printf 'locked local source missing: %s\n' "$source_dir" >&2
     exit 1
   }
