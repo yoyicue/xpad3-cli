@@ -1,6 +1,6 @@
 # xpad3-cli 设备端使用指南
 
-v0.1.4 只支持已经验证的 `TALIH-PD3S` `/338`。看到同为 Android 13 或 5.x 内核，不代表可以绕过 profile 检查。
+v0.1.5 只支持已经验证的 `TALIH-PD3S` `/338`。看到同为 Android 13 或 5.x 内核，不代表可以绕过 profile 检查。
 
 ## 1. 先检查，不改设备
 
@@ -57,7 +57,7 @@ adb shell /data/local/tmp/xpad3 cleanup
 
 或者执行一次普通重启。不要在同一 boot 里强停或更新 `com.ionstack.trigger` 后继续叠加 Root 尝试。
 
-v0.1.4 可以容忍中断事务遗留的、无守护进程的 root 所有
+v0.1.5 可以容忍中断事务遗留的、无守护进程的 root 所有
 `/data/local/tmp/su`：CLI 会报告无法以 shell 身份删除它，Root 链在捕获
 credential 后再以 root 身份原子替换。这个警告本身不需要循环重启。
 
@@ -66,6 +66,7 @@ credential 后再以 root 身份原子替换。这个警告本身不需要循环
 退出码 75 表示当前 boot 的状态不适合安全重试，例如：
 
 - trigger 已驻留但 KSU 没有成功加载；
+- app-domain probe 已安全停放或超时留存，不能在同一 boot 清理或重试；
 - 已加载的 KernelSU-family 模块不是锁定版本；
 - boot ID 在事务中变化；
 - 临时 Root 或 SELinux 无法安全收尾。

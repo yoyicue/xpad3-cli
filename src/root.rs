@@ -390,6 +390,11 @@ fn stream_runner(
         json!({"stage": stage, "arguments": arguments, "exit_code": status.code()}),
     )?;
     if !status.success() {
+        if let Some(reason) = runner_reboot_reason(status.code(), &all) {
+            return Err(needs_reboot(format!(
+                "IonStack stopped in a per-boot unsafe state ({reason}); perform an ordinary reboot before retrying"
+            )));
+        }
         if all.contains("holder attempts exhausted") {
             return Err(needs_reboot(
                 "IonStack exhausted all 6 holder opportunities; perform an ordinary reboot before retrying",
@@ -405,6 +410,21 @@ fn stream_runner(
 fn parse_holder_attempt(line: &str) -> Option<u32> {
     let value = line.split("HOLDER attempt=").nth(1)?.split('/').next()?;
     value.parse().ok()
+}
+
+fn runner_reboot_reason(exit_code: Option<i32>, output: &str) -> Option<&'static str> {
+    if exit_code == Some(75) {
+        return Some("runner exit 75");
+    }
+    if output.contains("[reroot] REBOOT_REQUIRED")
+        || output.contains("[reroot] EXIT_REBOOT_REQUIRED")
+        || output.contains("probe entered its safe parked state")
+        || output.contains("app was deliberately left alive to avoid stale-waiter teardown")
+        || output.contains("refusing to kill a parked stale-waiter process")
+    {
+        return Some("IonStack trigger was left alive to preserve a stale waiter");
+    }
+    None
 }
 
 fn cleanup_stale_shell_files() -> Vec<String> {
@@ -452,6 +472,14 @@ mod tests {
     fn parses_holder_attempt_progress() {
         assert_eq!(parse_holder_attempt("[reroot] HOLDER attempt=4/6"), Some(4));
         assert_eq!(parse_holder_attempt("[reroot] no holder"), None);
+    }
+
+    #[test]
+    fn parked_probe_requires_reboot_even_with_a_legacy_runner_exit() {
+        let transcript = "[app-probe] probe entered its safe parked state; app was left alive and a device reboot is required before another attempt\n[reroot] capture/probe timeout";
+        assert!(runner_reboot_reason(Some(1), transcript).is_some());
+        assert!(runner_reboot_reason(Some(75), "").is_some());
+        assert_eq!(runner_reboot_reason(Some(1), "generic failure"), None);
     }
 
     #[test]
