@@ -4,7 +4,7 @@
 
 名字表示产品族，不表示所有 5.x 固件天然兼容。每台设备必须同时命中签名目录中的完整 runtime profile，CLI 才会执行 IonStack 或 KernelSU late-load。
 
-## v0.1.9 支持范围
+## v0.1.10 支持范围
 
 | Profile | 设备 | 指纹 | 内核 | 状态 |
 | --- | --- | --- | --- | --- |
@@ -18,6 +18,8 @@
 - PD3S app-domain compat32 trigger：`com.ionstack.trigger.v2` v2；旧 v1 包可保留，运行中的 v1/v2 都会阻止同 boot 叠加利用。
 - PD3S IonStack runner、perf target、preload 和 chainwalk probe。
 - KernelSU 32547 / UAPI 2 / `android12-5.10` late-load，与官方同签名 Manager 32547 精确对齐，调用时带 `--allow-shell`。
+- runtime 身份通过后，以实际 `ksud module list` 等待控制面就绪；KSU 驻留后切换到
+  `/system/bin/su`，避免临时 shell-domain su 与 `/data/adb` 权限及启动时序竞态。
 - KSU late-load 的耐重启阶段日志，以及 pstore、DropBox、AEE/MRDUMP 清单和 MTK DebugLogger 多渠道导出。
 - 官方 KernelSU Manager、`xpad-install` v0.2.14、0044 installer backup 和
   BoomInstaller v13.6.0.r24.2f6e7c2。APK/DEX 暂存文件逐事务唯一，上次中断留下的

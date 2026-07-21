@@ -23,6 +23,7 @@ const PERF_TARGET: &str = "/data/local/tmp/ionstack_perf_target";
 const PRELOAD: &str = "/data/local/tmp/ionstack_preload.so";
 const PROBE: &str = "/data/local/tmp/cve43499_chainwalk_probe_arm32";
 pub const SU: &str = "/data/local/tmp/su";
+const PERSISTENT_SU: &str = "/system/bin/su";
 const SOCKET: &str = "/data/local/tmp/temp_su.sock";
 const DAEMON_LOG: &str = "/data/local/tmp/su_daemon.log";
 
@@ -248,7 +249,18 @@ pub fn root_exec(command: &str) -> Result<RootCommandOutput> {
         "{command}\n__xpad3_rc=$?\nprintf '\\n{}%d\\n' \"$__xpad3_rc\"",
         marker
     );
-    let output = run(SU, &["-c", &wrapped])?;
+    let output = if device::ksu_module_loaded() && Path::new(PERSISTENT_SU).exists() {
+        // Once late-load succeeds, prefer KernelSU's u:r:ksu:s0 transport.
+        // The temporary IonStack client remains available only as a recovery
+        // channel until RootSession::close retires its daemon and files.
+        run(PERSISTENT_SU, &["0", "sh", "-c", &wrapped])?
+    } else if Path::new(SU).is_file() {
+        run(SU, &["-c", &wrapped])?
+    } else {
+        return Err(msg(
+            "no verified root transport is available (temporary su absent and KernelSU inactive)",
+        ));
+    };
     let text = output_text(&output);
     let mut rc = None;
     let mut clean = Vec::new();

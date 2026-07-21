@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "product_version": "0.1.9",
+  "product_version": "0.1.10",
   "sources": [
     {
       "component": "ionstack-xpad3s",

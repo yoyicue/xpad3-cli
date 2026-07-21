@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "product_version": "0.1.9",
-  "catalog_version": "2026-07-19.7",
+  "product_version": "0.1.10",
+  "catalog_version": "2026-07-22.1",
   "profile": {
     "build_fingerprint": "alps/TALIH-PD3S/TALIH-PD3S:13/TP1A.220624.014/338:user/release-keys",
     "build_fingerprint_prefix": "",
